@@ -1,5 +1,5 @@
 {
-  "id": "composio",
+  "id": "copilotai-composio",
   "name": "Composio",
   "description": "Access 1000+ third-party tools via Composio (Gmail, Slack, GitHub, Notion, etc.)",
   "configSchema": {
