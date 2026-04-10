@@ -1,0 +1,12 @@
+{
+    "name": "cassia-openclaw-marketplace",
+    "version": "1.0.0",
+    "owner": "Cassia Research",
+    "plugins": [
+      {
+        "name": "copilotai-composio",
+        "description": "Composio MCP integration (internal build)",
+        "source": "./plugins/composio"
+      }
+    ]
+  }
