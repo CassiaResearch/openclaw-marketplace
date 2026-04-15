@@ -6,11 +6,15 @@
   "private": true,
   "type": "module",
   "files": [
+    "index.ts",
     "openclaw.plugin.json",
     "skills",
     "README.md"
   ],
   "openclaw": {
-    "plugin": "./openclaw.plugin.json"
+    "plugin": "./openclaw.plugin.json",
+    "extensions": [
+      "./index.ts"
+    ]
   }
 }
