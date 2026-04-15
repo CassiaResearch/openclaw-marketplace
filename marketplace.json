@@ -12,6 +12,11 @@
         "name": "copilotai-openclaw-langsmith",
         "description": "LangSmith tracing for agent turns, tool calls, and LLM invocations",
         "source": "./plugins/langsmith"
+      },
+      {
+        "name": "emma-playbooks",
+        "description": "Plugin library of skills/playbooks for Emma to use and refer to to do her work as an SDR.",
+        "source": "./plugins/emma-playbooks"
       }
     ]
   }
