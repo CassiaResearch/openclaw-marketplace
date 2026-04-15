@@ -1,0 +1,16 @@
+{
+  "name": "emma-playbooks",
+  "version": "0.1.0",
+  "description": "Plugin library of skills/playbooks for Emma to use and refer to to do her work as an SDR.",
+  "license": "UNLICENSED",
+  "private": true,
+  "type": "module",
+  "files": [
+    "openclaw.plugin.json",
+    "skills",
+    "README.md"
+  ],
+  "openclaw": {
+    "plugin": "./openclaw.plugin.json"
+  }
+}
