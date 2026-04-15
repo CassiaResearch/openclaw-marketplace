@@ -26,31 +26,16 @@
     "monitoring",
     "debugging"
   ],
-  "main": "dist/index.js",
-  "exports": {
-    ".": {
-      "import": "./dist/index.js"
-    }
-  },
   "files": [
-    "dist",
+    "src",
     "openclaw.plugin.json"
   ],
   "openclaw": {
-    "plugin": "./openclaw.plugin.json",
     "extensions": [
-      "./dist/index.js"
+      "./src/index.ts"
     ]
   },
   "peerDependencies": {
     "openclaw": "*"
-  },
-  "scripts": {
-    "build": "tsup",
-    "dev": "tsup --watch"
-  },
-  "devDependencies": {
-    "tsup": "^8.5.1",
-    "typescript": "^5.9.3"
   }
 }
