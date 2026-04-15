@@ -48,7 +48,7 @@ function extractUsageFromMessages(messages: unknown): TokenUsage | undefined {
 }
 
 export default {
-  id: "openclaw-langsmith",
+  id: "copilotai-openclaw-langsmith",
   name: "LangSmith Tracing",
   description: "Automatic LangSmith tracing for OpenClaw agent turns, tool calls, and LLM calls.",
   kind: "utility" as const,
@@ -156,7 +156,7 @@ export default {
 
     // Register service with graceful shutdown
     api.registerService({
-      id: "openclaw-langsmith",
+      id: "copilotai-openclaw-langsmith",
       start: () => {
         log.info("langsmith tracing active");
       },
