@@ -28,8 +28,8 @@ jobs:
 
       - name: Configure git identity
         run: |
-          git config user.email "emma-playbooks-bot@cassia.ai"
-          git config user.name "emma-playbooks sync"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: git subtree pull emma-playbooks
         run: |
