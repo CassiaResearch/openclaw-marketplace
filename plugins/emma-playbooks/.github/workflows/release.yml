@@ -1,0 +1,40 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Serialize runs so two quick merges don't race on the marketplace subtree push.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Re-sync the plugin subtree in openclaw-marketplace.
+  # EMMA_MARKETPLACE_PAT needs contents:write on CassiaResearch/openclaw-marketplace.
+  sync-marketplace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: CassiaResearch/openclaw-marketplace
+          token: ${{ secrets.EMMA_MARKETPLACE_PAT }}
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.email "emma-playbooks-bot@cassia.ai"
+          git config user.name "emma-playbooks sync"
+
+      - name: git subtree pull emma-playbooks
+        run: |
+          set -euo pipefail
+          git subtree pull --prefix=plugins/emma-playbooks \
+            https://github.com/CassiaResearch/emma-playbooks.git main --squash \
+            -m "Sync emma-playbooks@${{ github.sha }}"
+          git push
