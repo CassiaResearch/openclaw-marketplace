@@ -7,14 +7,14 @@ LangSmith tracing plugin for [OpenClaw](https://github.com/openclaw/openclaw). A
 
 ## Features
 
-- **Agent turn tracing** — Each agent turn becomes a LangSmith run with prompt, response, and token usage
+- **LangGraph-style traces** — Trace tree mirrors LangGraph conventions (root chain → LLM children → tool children)
+- **Per-LLM-call visibility** — Each inner model invocation in the tool-use loop gets its own LLM run with exact `messages` context
 - **Thread grouping** — Turns from the same session are grouped in LangSmith's Threads view via `thread_id`
-- **Per-LLM-call tracing** — Individual LLM calls (including engram memory calls) appear as child runs with full input/output
-- **Token tracking** — Prompt tokens, completion tokens, and total tokens displayed in LangSmith dashboard
+- **Accurate token tracking** — Per-call token usage from assistant messages, no double-counting (root is chain, tokens on LLM children only)
 - **Smart tagging** — Auto-tags traces with source (cron, discord, slack, telegram), job names, channel IDs
-- **Tool call tracing** — Tool calls nested under their parent agent run
+- **Tool nesting** — Tool calls nested under the LLM call that invoked them, not the root
+- **Context-engine aware** — `historyMessages` is post-assemble, so lossless-claw / compaction output is reflected
 - **Subagent tracing** — Subagent invocations appear as child chain runs
-- **Prompt capture** — Assembled prompt (with injected memory/context) stored on agent runs
 - **Batch queue** — Operations batched for efficient API usage (configurable interval and size)
 - **Per-feature toggles** — Enable/disable each trace type independently
 - **Zero runtime dependencies** — Uses native `fetch` and `crypto.randomUUID()`
@@ -157,27 +157,41 @@ Traces are automatically tagged for easy filtering in LangSmith:
 
 ## How It Works
 
+### LangGraph-Style Trace Structure
+
+Each user turn produces a trace tree that mirrors LangGraph conventions:
+
+```
+agent_turn (chain, root)              ← one per user message
+├── anthropic/claude-… #1 (llm)       ← first LLM call (full messages as inputs)
+│   ├── Read (tool)                   ← tool nested under the LLM that invoked it
+│   └── Edit (tool)
+├── anthropic/claude-… #2 (llm)       ← second call (sees tool results in context)
+│   └── Search (tool)
+├── anthropic/claude-… #3 (llm)       ← final call (produces answer)
+└── subagent:research (chain)         ← if subagents were spawned
+```
+
 ### Session Lifecycle
-Hooks into `session_start` and `session_end`. Tracks session boundaries and cleans up state when sessions end. Every LangSmith run includes `thread_id` in metadata, enabling LangSmith's Threads view to group turns from the same conversation.
+Hooks into `session_start` and `session_end`. Tracks session boundaries and cleans up state (closing any in-flight runs) when sessions end. Every LangSmith run includes `thread_id` in metadata, enabling LangSmith's Threads view to group turns from the same conversation.
 
 ### Agent Turns
-Hooks into `before_model_resolve` and `agent_end`. Creates LangSmith runs with:
-- Prompt content
-- Assembled prompt with injected memory/context (via `before_prompt_build`)
-- Response messages
-- Token usage (prompt, completion, total)
-- Duration
-- Auto-generated tags based on session source
+Hooks into `llm_input` and `agent_end`. The root run (`agent_turn`) is a **chain** — not an LLM run — so token counts live on the children and LangSmith dashboards don't double-count. The root carries:
+- Full initial context as `inputs.messages` (system + history + user prompt, post-assemble/compaction)
+- Aggregated usage summary in outputs metadata
+- Auto-generated tags based on session source (cron, discord, slack, etc.)
 
-### LLM Calls
-Hooks into `llm_input` and `llm_output`. Each LLM call (including engram memory extraction/consolidation) appears as a child run under the agent turn with:
-- Full prompt and system prompt
-- Completion text
-- Per-call token usage with cache breakdown
+### Per-LLM-Call Tracing
+Hooks into `before_message_write`. Each time an assistant message is written to the session during the tool-use loop, a new LLM child run is emitted with:
+- `inputs.messages` — the exact context window the model saw on this call (grows with each tool result)
+- `outputs.messages` — the assistant's response (including any tool_calls)
+- Per-call token usage with cache breakdown (from the assistant message's `usage` field)
 - Model and provider info
 
+This provides real-time, per-inner-call visibility — not just a single aggregated "turn" run.
+
 ### Tool Calls
-Hooks into `before_tool_call` and `after_tool_call`. Tool runs are nested under the parent agent run using LangSmith's `trace_id` and `dotted_order` for proper hierarchy.
+Hooks into `before_tool_call` and `after_tool_call`. Tool runs are **nested under the LLM call that invoked them** (not under the root), matching LangGraph's hierarchy.
 
 ### Subagent Runs
 Hooks into `subagent_ended`. When subagents are invoked during an agent turn, they appear as child chain runs with task input and result output.
