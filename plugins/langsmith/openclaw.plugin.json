@@ -1,5 +1,5 @@
 {
-  "id": "copilotai-openclaw-langsmith",
+  "id": "openclaw-langsmith",
   "kind": "utility",
   "configSchema": {
     "type": "object",

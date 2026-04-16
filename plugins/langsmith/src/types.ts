@@ -11,8 +11,8 @@ export interface PluginConfig {
 
 export interface LangSmithRun {
   id: string;
-  trace_id: string; // Required by LangSmith API - the root run ID for this trace
-  dotted_order: string; // Required - ordering key: <timestamp>Z<run_id> for root, parent_dotted_order.<timestamp>Z<run_id> for child
+  trace_id: string;
+  dotted_order: string;
   name: string;
   run_type: "chain" | "tool" | "llm";
   inputs: Record<string, unknown>;
@@ -23,53 +23,8 @@ export interface LangSmithRun {
   error?: string;
   extra?: Record<string, unknown>;
   session_name: string;
-  // Token usage fields (may only work for llm run types)
   prompt_tokens?: number;
   completion_tokens?: number;
   total_tokens?: number;
-  // Tags for filtering in LangSmith UI
   tags?: string[];
-}
-
-export interface TokenUsage {
-  prompt_tokens?: number;
-  completion_tokens?: number;
-  total_tokens?: number;
-  // Alternative field names that OpenClaw might use
-  input_tokens?: number;
-  output_tokens?: number;
-}
-
-export interface ModelInfo {
-  model: string;
-  provider: string;
-}
-
-/** Mirrors OpenClaw's PluginHookLlmInputEvent */
-export interface LlmInputEvent {
-  runId: string;
-  sessionId: string;
-  provider: string;
-  model: string;
-  systemPrompt?: string;
-  prompt: string;
-  historyMessages: unknown[];
-  imagesCount: number;
-}
-
-/** Mirrors OpenClaw's PluginHookLlmOutputEvent */
-export interface LlmOutputEvent {
-  runId: string;
-  sessionId: string;
-  provider: string;
-  model: string;
-  assistantTexts: string[];
-  lastAssistant?: unknown;
-  usage?: {
-    input?: number;
-    output?: number;
-    cacheRead?: number;
-    cacheWrite?: number;
-    total?: number;
-  };
 }

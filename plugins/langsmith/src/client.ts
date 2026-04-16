@@ -12,13 +12,11 @@ export class LangSmithClient {
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly endpoint: string;
   private readonly apiKey: string;
-  private readonly projectName: string;
   private readonly batchMaxSize: number;
 
-  constructor(private readonly config: PluginConfig) {
+  constructor(config: PluginConfig) {
     this.endpoint = config.langsmithEndpoint.replace(/\/$/, "");
     this.apiKey = config.langsmithApiKey!;
-    this.projectName = config.projectName;
     this.batchMaxSize = config.batchMaxSize;
 
     this.timer = setInterval(() => this.flush(), config.batchIntervalMs);
@@ -42,13 +40,14 @@ export class LangSmithClient {
     }
   }
 
+  // TODO: failed batches are dropped — no retry queue. For transient LangSmith
+  // outages, traces from that batch interval are lost. A bounded retry queue
+  // with exponential backoff would improve reliability.
   async flush(): Promise<void> {
     if (this.queue.length === 0) return;
 
     const batch = this.queue.splice(0);
     log.debug(`flushing ${batch.length} operations`);
-
-    // LangSmith supports a batch endpoint: POST /runs/batch
     const creates: Record<string, unknown>[] = [];
     const updates: Record<string, unknown>[] = [];
 

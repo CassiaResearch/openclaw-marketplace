@@ -15,8 +15,8 @@ export function parseConfig(raw: Record<string, unknown> | undefined): PluginCon
     projectName: (r.projectName as string) || "openclaw",
     traceAgentTurns: r.traceAgentTurns !== false,
     traceToolCalls: r.traceToolCalls !== false,
-    batchIntervalMs: (r.batchIntervalMs as number) || 1000,
-    batchMaxSize: (r.batchMaxSize as number) || 20,
+    batchIntervalMs: Math.max(100, (r.batchIntervalMs as number) || 1000),
+    batchMaxSize: Math.max(1, (r.batchMaxSize as number) || 20),
     debug: !!r.debug,
   };
 }

@@ -42,25 +42,24 @@ src/
 
 ### Key Patterns
 
-1. **Hooks drive everything** — `before_model_resolve`, `agent_end`, `before_tool_call`, `after_tool_call`, `llm_input`, `llm_output`, `session_start`, `session_end`, `before_prompt_build`, `subagent_ended`
-2. **Session-scoped state** — all active runs are keyed by `sessionKey`, no singletons
+1. **LangGraph-style trace tree** — root `chain` → N `llm` children (one per inner LLM call) → `tool` children nested under the LLM that invoked them
+2. **Session-scoped state** — one `TurnState` per active session, keyed by `sessionKey`, no singletons
 3. **Thread grouping** — every LangSmith run includes `thread_id: sessionKey` in metadata
-4. **Token usage from messages** — extracted from assistant messages in agent_end
-5. **Model detection cascade** — event → context → model string parsing → name inference
-6. **Graceful shutdown** — flush pending traces on stop
+4. **Per-call messages** — each LLM child run's `inputs.messages` is the exact context window the model saw on that call
+5. **Per-call token usage** — extracted from each assistant message's `usage` field, no double-counting (root is `chain` type, tokens only on `llm` children)
+6. **Real-time tracing via `before_message_write`** — assistant messages fire as they're written to the session, giving per-inner-call visibility inside the tool-use loop
+7. **Graceful shutdown** — flush pending traces on stop
 
 ### Integration Points
 
 - `api.on("session_start")` — session lifecycle tracking
-- `api.on("session_end")` — cleanup session state
-- `api.on("before_model_resolve")` — start agent chain run
-- `api.on("before_prompt_build")` — capture assembled prompt with injected memory/context
-- `api.on("agent_end")` — end chain run with usage
+- `api.on("session_end")` — cleanup session state, close any in-flight runs
+- `api.on("llm_input")` — start turn: create root chain, seed message buffer from post-assemble session state
+- `api.on("before_message_write")` — per-message: emit LLM child run on assistant messages, grow message buffer on all messages
+- `api.on("agent_end")` — end turn: close root chain with aggregated metadata
 - `api.on("subagent_ended")` — track subagent runs as child chains
-- `api.on("before_tool_call")` — start tool run
+- `api.on("before_tool_call")` — start tool run (parented under invoking LLM call)
 - `api.on("after_tool_call")` — end tool run
-- `api.on("llm_input")` — start per-LLM-call child run
-- `api.on("llm_output")` — end LLM child run with token usage
 - `api.registerService()` — graceful shutdown
 
 ### Testing Locally
@@ -81,6 +80,7 @@ grep "\[langsmith\]" ~/.openclaw/logs/gateway.log
 ### Common Gotchas
 
 1. **Missing API key** — add to launchd plist EnvironmentVariables
-2. **Token data missing** — model/provider may not include usage in responses
+2. **Token data missing** — model/provider may not include usage in assistant message
 3. **Model shows undefined** — check all detection sources in order
-4. **Deprecation warning** — if you see "still uses legacy before_agent_start", the old version is loaded
+4. **No inner-call visibility** — verify `before_message_write` hook is registered (check boot log for "registering before_message_write hook")
+5. **Compaction retry** — if llm_input fires twice (compaction retry), the first root closes as "Compacted and retried" and a fresh trace starts
