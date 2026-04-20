@@ -1,0 +1,27 @@
+{
+  "id": "self-learn",
+  "name": "Self-Learn",
+  "description": "Enables the agent to autonomously create, update, and manage reusable skills from experience",
+  "contracts": {
+    "tools": [
+      "skill_manage"
+    ]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "maxSkills": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 500,
+        "default": 100
+      },
+      "enableHeartbeat": {
+        "type": "boolean",
+        "description": "Add a periodic heartbeat task to HEARTBEAT.md for skill hygiene review",
+        "default": true
+      }
+    }
+  }
+}
