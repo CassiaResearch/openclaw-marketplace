@@ -1,17 +1,22 @@
 {
-    "name": "cassia-openclaw-marketplace",
-    "version": "1.0.0",
-    "owner": "Cassia Research",
-    "plugins": [
-      {
-        "name": "copilotai-composio",
-        "description": "Composio MCP integration (internal build)",
-        "source": "./plugins/composio"
-      },
-      {
-        "name": "copilotai-openclaw-langsmith",
-        "description": "LangSmith tracing for agent turns, tool calls, and LLM invocations",
-        "source": "./plugins/langsmith"
-      }
-    ]
-  }
+  "name": "cassia-openclaw-marketplace",
+  "version": "1.0.0",
+  "owner": "Cassia Research",
+  "plugins": [
+    {
+      "name": "copilotai-composio",
+      "description": "Composio MCP integration (internal build)",
+      "source": "./plugins/composio"
+    },
+    {
+      "name": "copilotai-openclaw-langsmith",
+      "description": "LangSmith tracing for agent turns, tool calls, and LLM invocations",
+      "source": "./plugins/langsmith"
+    },
+    {
+      "name": "self-learn",
+      "description": "Enables the agent to autonomously create, update, and manage reusable skills from experience",
+      "source": "./plugins/self-learn"
+    }
+  ]
+}
