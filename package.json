@@ -1,0 +1,15 @@
+{
+  "name": "self-learn",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenClaw self-learning skill creation plugin",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "openclaw": "*"
+  }
+}
