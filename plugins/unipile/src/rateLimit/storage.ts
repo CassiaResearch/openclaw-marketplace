@@ -62,8 +62,16 @@ export function nowIso(now = new Date()): string {
   return now.toISOString();
 }
 
+let homeOverrideForTests: string | undefined;
+
+/** @internal Test-only: redirect usage.json to a temp directory. */
+export function setStorageHomeForTests(dir: string | undefined): void {
+  homeOverrideForTests = dir;
+}
+
 function filePath(accountId: string): string {
-  return path.join(os.homedir(), ".openclaw", "unipile", accountId, "usage.json");
+  const home = homeOverrideForTests ?? os.homedir();
+  return path.join(home, ".openclaw", "unipile", accountId, "usage.json");
 }
 
 function emptyState(accountId: string, accountTier: AccountTier): UsageState {
