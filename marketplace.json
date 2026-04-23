@@ -22,6 +22,11 @@
       "name": "openclaw-unipile",
       "description": "LinkedIn automation via Unipile (messaging, connections, profile, Sales Navigator search) with enforced daily quotas and human-like pacing",
       "source": "./plugins/unipile"
+    },
+    {
+      "name": "openclaw-instantly",
+      "description": "Receives Instantly.ai webhooks, authenticates via a custom header, and creates a TaskFlow per event for downstream agent handling",
+      "source": "./plugins/openclaw-instantly"
     }
   ]
 }
