@@ -1,18 +1,18 @@
 {
-  "name": "openclaw-langsmith",
-  "version": "1.2.0",
+  "name": "openclaw-langsmith-trace-plugin",
+  "version": "0.1.0",
   "type": "module",
-  "description": "LangSmith tracing plugin for OpenClaw. Automatic observability for agent turns, tool calls, and LLM invocations.",
+  "description": "LangSmith tracing plugin for OpenClaw, built on the official langsmith SDK. Per-call tracing with canonical usage_metadata, Threads-view grouping, sampling, and failed-trace disk replay.",
   "license": "MIT",
-  "author": "Joshua Warren",
+  "author": "Cassia Research",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/joshuaswarren/openclaw-langsmith.git"
+    "url": "git+https://github.com/CassiaResearch/openclaw-langsmith-trace-plugin.git"
   },
   "bugs": {
-    "url": "https://github.com/joshuaswarren/openclaw-langsmith/issues"
+    "url": "https://github.com/CassiaResearch/openclaw-langsmith-trace-plugin/issues"
   },
-  "homepage": "https://github.com/joshuaswarren/openclaw-langsmith#readme",
+  "homepage": "https://github.com/CassiaResearch/openclaw-langsmith-trace-plugin#readme",
   "keywords": [
     "openclaw",
     "openclaw-plugin",
@@ -22,20 +22,39 @@
     "observability",
     "llm",
     "ai-agent",
-    "telemetry",
-    "monitoring",
-    "debugging"
+    "telemetry"
   ],
   "files": [
     "src",
-    "openclaw.plugin.json"
+    "openclaw.plugin.json",
+    "README.md",
+    "LICENSE"
   ],
   "openclaw": {
     "extensions": [
       "./src/index.ts"
     ]
   },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "langsmith": "^0.5.20"
+  },
   "peerDependencies": {
-    "openclaw": "*"
+    "openclaw": "^2026.4"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "prettier": "^3.4.2",
+    "typescript": "~6.0.2",
+    "vitest": "^4.1.4"
   }
 }

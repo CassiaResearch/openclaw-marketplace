@@ -1,125 +1,101 @@
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
-import { parseConfig } from "./config.js";
-import { initLogger, log } from "./logger.js";
-import { LangSmithClient } from "./client.js";
-import { Tracer, type AgentMessage } from "./tracer.js";
+import type { OpenClawPluginApi, OpenClawPluginDefinition } from "openclaw/plugin-sdk/plugin-entry";
+import { readPluginConfig } from "./config.js";
+import { attachLog } from "./log.js";
+import { buildLangsmithClient } from "./langsmith-bridge.js";
+import { TurnRecorder } from "./turn-recorder.js";
 
-export default {
-  id: "copilotai-openclaw-langsmith",
+const PLUGIN_ID = "openclaw-langsmith-trace";
+const DEFAULT_SESSION_KEY = "default";
+const FLUSH_TIMEOUT_MS = 5_000;
+
+const plugin: OpenClawPluginDefinition = {
+  id: PLUGIN_ID,
   name: "LangSmith Tracing",
-  description: "Automatic LangSmith tracing for OpenClaw agent turns, tool calls, and LLM calls.",
-  kind: "utility" as const,
+  description:
+    "LangSmith tracing for OpenClaw agent turns, inner LLM calls, tool calls, and subagents. Built on the official langsmith SDK.",
 
-  register(api: OpenClawPluginApi) {
-    const cfg = parseConfig(api.pluginConfig);
-    initLogger(api.logger, cfg.debug);
+  register(api: OpenClawPluginApi): void {
+    const cfg = readPluginConfig(api.pluginConfig);
+    const log = attachLog(api.logger, cfg.debug);
 
-    if (!cfg.langsmithApiKey) {
-      log.warn("no LangSmith API key — tracing disabled");
+    if (!cfg.apiKey) {
+      log.warn("no LangSmith API key set — tracing disabled");
       return;
     }
 
-    const client = new LangSmithClient(cfg);
-    const tracer = new Tracer(client, cfg);
-
-    // ── Session lifecycle ───────────────────────────────────────────────
-
-    api.on("session_start", (_event, ctx) => {
-      tracer.onSessionStart(ctx.sessionKey ?? "default");
-    });
-
-    api.on("session_end", (_event, ctx) => {
-      tracer.onSessionEnd(ctx.sessionKey ?? "default");
-    });
-
-    // ── Turn boundary: llm_input starts the turn ────────────────────────
-    // llm_input fires once per attempt, AFTER context-engine assemble().
-    // historyMessages is the post-assemble session state — what the LLM sees.
+    const client = buildLangsmithClient(cfg, log);
+    const recorder = new TurnRecorder(client, cfg, log);
 
     if (cfg.traceAgentTurns) {
-      log.info("registering llm_input hook (turn start)");
+      api.on("session_end", (_event, ctx) => {
+        void recorder.onSessionEnd(ctx.sessionKey ?? DEFAULT_SESSION_KEY);
+      });
+
       api.on("llm_input", (event, ctx) => {
-        tracer.onTurnStart(ctx.sessionKey ?? "default", event, {
-          runId: ctx.runId,
-          agentId: ctx.agentId,
-          sessionId: ctx.sessionId,
-          sessionKey: ctx.sessionKey,
-          messageProvider: ctx.messageProvider,
-          trigger: ctx.trigger,
-          channelId: ctx.channelId,
-        });
+        void recorder.onTurnStart(ctx.sessionKey ?? DEFAULT_SESSION_KEY, event, ctx);
       });
-    }
 
-    // ── Per-message write: drives per-LLM-call child runs ──────────────
-    // before_message_write fires for every message written to the session
-    // JSONL during the agent loop — assistant messages (inner LLM calls),
-    // tool results, and user messages. This gives real-time, per-call
-    // visibility into the tool-use loop.
-
-    if (cfg.traceAgentTurns) {
-      log.info("registering before_message_write hook (per-call tracing)");
       api.on("before_message_write", (event, ctx) => {
-        tracer.onMessageWrite(ctx.sessionKey ?? "default", event.message as unknown as AgentMessage);
+        void recorder.onMessageWrite(ctx.sessionKey ?? DEFAULT_SESSION_KEY, event.message);
       });
-    }
 
-    // ── Turn end: agent_end closes the root chain ───────────────────────
-
-    if (cfg.traceAgentTurns) {
-      log.info("registering agent_end hook (turn end)");
       api.on("agent_end", (event, ctx) => {
-        tracer.onTurnEnd(ctx.sessionKey ?? "default", event.success, event.durationMs, event.error);
+        void recorder.onTurnEnd(
+          ctx.sessionKey ?? DEFAULT_SESSION_KEY,
+          event.success,
+          event.durationMs,
+          event.error,
+        );
       });
-    }
 
-    // ── Subagent tracing ────────────────────────────────────────────────
+      api.on("subagent_spawned", (event, ctx) => {
+        recorder.onSubagentSpawned(ctx.requesterSessionKey ?? DEFAULT_SESSION_KEY, event);
+      });
 
-    if (cfg.traceAgentTurns) {
       api.on("subagent_ended", (event, ctx) => {
-        tracer.onSubagentEnded(ctx.requesterSessionKey ?? "default", event);
+        void recorder.onSubagent(ctx.requesterSessionKey ?? DEFAULT_SESSION_KEY, event);
       });
     }
-
-    // ── Tool call tracing ───────────────────────────────────────────────
-    // Tool runs are parented under the LLM call that invoked them, matching
-    // LangGraph's nesting structure.
 
     if (cfg.traceToolCalls) {
       api.on("before_tool_call", (event, ctx) => {
-        tracer.startToolRun(
-          ctx.sessionKey ?? "default",
-          event.toolName,
-          event.toolCallId ?? ctx.toolCallId ?? "",
-          event.params,
-        );
+        void recorder.onToolStart(ctx.sessionKey ?? DEFAULT_SESSION_KEY, event, ctx);
       });
-    }
 
-    if (cfg.traceToolCalls) {
       api.on("after_tool_call", (event, ctx) => {
-        const toolCallId = event.toolCallId ?? ctx.toolCallId;
-        if (toolCallId) {
-          tracer.endToolRun(ctx.sessionKey ?? "default", toolCallId, event.result, event.error, event.durationMs);
-        } else {
-          log.debug("after_tool_call: no toolCallId on event or ctx");
-        }
+        void recorder.onToolEnd(ctx.sessionKey ?? DEFAULT_SESSION_KEY, event, ctx);
       });
     }
-
-    // ── Service registration with graceful shutdown ─────────────────────
 
     api.registerService({
-      id: "copilotai-openclaw-langsmith",
+      id: PLUGIN_ID,
       start: () => {
-        log.info("langsmith tracing active");
+        // No-op: the tracer is ready as soon as register() completes.
       },
       stop: async () => {
-        tracer.shutdown();
-        await client.flush();
-        client.close();
-        log.info("langsmith tracing stopped");
+        log.info("service stop — flushing pending traces");
+        await recorder.shutdown();
+        try {
+          // Bound the flush so a stuck upload can't block gateway shutdown.
+          await Promise.race([
+            client.awaitPendingTraceBatches(),
+            new Promise<void>((_, reject) =>
+              setTimeout(
+                () => reject(new Error(`flush timed out after ${FLUSH_TIMEOUT_MS}ms`)),
+                FLUSH_TIMEOUT_MS,
+              ).unref(),
+            ),
+          ]);
+        } catch (err) {
+          log.warn(`flush failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        // Release SDK-owned timers (prompt-cache refresh) so the process can exit.
+        client.cleanup();
       },
     });
+
+    log.info(`ready — project=${cfg.projectName} sampling=${cfg.samplingRate}`);
   },
 };
+
+export default plugin;
