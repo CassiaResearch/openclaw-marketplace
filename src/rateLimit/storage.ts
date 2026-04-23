@@ -1,10 +1,16 @@
-import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AccountTier, RateCategory } from "../types.js";
 
 const STORAGE_SCHEMA_VERSION = 1;
+
+/**
+ * How many days of per-day aggregates are kept in the hot usage.json file.
+ * Must be ≥ the longest budget window (monthlyLimit is 30 days). Older days
+ * are evicted to usage-history.jsonl on save.
+ */
+export const HOT_WINDOW_DAYS = 31;
 
 export interface CategoryCounts {
   calls: number;
@@ -40,13 +46,6 @@ export interface UsageState {
   lastCallAt: Partial<Record<RateCategory, string>>;
   lastCooldownAt: Record<string, string>;
   events: UsageEvent[];
-  /**
-   * Hashes of recently-sent message bodies, keyed per target (chatId or
-   * sorted attendee list). Newest-first, capped at MAX_DEDUP_HASHES_PER_KEY
-   * to bound file size. Used to prevent sending the same text to the same
-   * recipient twice.
-   */
-  recentSends: Record<string, string[]>;
 }
 
 export interface LoadOptions {
@@ -69,9 +68,21 @@ export function setStorageHomeForTests(dir: string | undefined): void {
   homeOverrideForTests = dir;
 }
 
-function filePath(accountId: string): string {
+function accountDir(accountId: string): string {
   const home = homeOverrideForTests ?? os.homedir();
-  return path.join(home, ".openclaw", "unipile", accountId, "usage.json");
+  return path.join(home, ".openclaw", "unipile", accountId);
+}
+
+function filePath(accountId: string): string {
+  return path.join(accountDir(accountId), "usage.json");
+}
+
+export function historyPath(accountId: string): string {
+  return path.join(accountDir(accountId), "usage-history.jsonl");
+}
+
+export function eventsArchivePath(accountId: string): string {
+  return path.join(accountDir(accountId), "events.jsonl");
 }
 
 function emptyState(accountId: string, accountTier: AccountTier): UsageState {
@@ -86,7 +97,6 @@ function emptyState(accountId: string, accountTier: AccountTier): UsageState {
     lastCallAt: {},
     lastCooldownAt: {},
     events: [],
-    recentSends: {},
   };
 }
 
@@ -116,7 +126,6 @@ export function loadUsage(accountId: string, opts: LoadOptions): UsageState {
       lastCallAt: parsed.lastCallAt ?? {},
       lastCooldownAt: parsed.lastCooldownAt ?? {},
       events: parsed.events ?? [],
-      recentSends: parsed.recentSends ?? {},
     };
   } catch (err) {
     opts.onCorruption?.(err);
@@ -133,8 +142,58 @@ export function saveUsage(accountId: string, state: UsageState): void {
     version: STORAGE_SCHEMA_VERSION,
     updatedAt: nowIso(),
   };
-  fs.writeFileSync(tmp, JSON.stringify(payload, null, 2), "utf8");
+  // 0o600: contains per-tool activity and message-body hashes. Not secrets,
+  // but not anyone-readable either.
+  fs.writeFileSync(tmp, JSON.stringify(payload, null, 2), { encoding: "utf8", mode: 0o600 });
   fs.renameSync(tmp, target);
+}
+
+function appendJsonl(filePath: string, lines: readonly string[]): void {
+  if (lines.length === 0) return;
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.appendFileSync(filePath, lines.join("\n") + "\n", { encoding: "utf8", mode: 0o600 });
+}
+
+/**
+ * Evict daily aggregate entries older than HOT_WINDOW_DAYS to usage-history.jsonl.
+ * History is append-only: one JSON object per line with the date, counts, per-tool
+ * totals, and the archive timestamp. The hot file keeps only what the budget
+ * windows actually read. Returns the number of dates archived.
+ */
+export function archiveOldDailyAggregates(
+  accountId: string,
+  state: UsageState,
+  now = new Date(),
+): number {
+  const cutoffMs = now.getTime() - HOT_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  const drops: string[] = [];
+  for (const date of Object.keys(state.aggregates.daily)) {
+    const t = Date.parse(`${date}T00:00:00Z`);
+    if (Number.isNaN(t) || t < cutoffMs) drops.push(date);
+  }
+  if (drops.length === 0) return 0;
+  const archivedAt = nowIso(now);
+  const lines = drops.map((date) =>
+    JSON.stringify({
+      date,
+      counts: state.aggregates.daily[date] ?? {},
+      tools: state.aggregates.perTool[date] ?? {},
+      archivedAt,
+    }),
+  );
+  appendJsonl(historyPath(accountId), lines);
+  for (const date of drops) {
+    delete state.aggregates.daily[date];
+    delete state.aggregates.perTool[date];
+  }
+  return drops.length;
+}
+
+/** Append events that have aged out of the in-memory ring to events.jsonl. */
+export function archiveEvents(accountId: string, events: readonly UsageEvent[]): void {
+  if (events.length === 0) return;
+  const lines = events.map((e) => JSON.stringify(e));
+  appendJsonl(eventsArchivePath(accountId), lines);
 }
 
 export function sumCategoryAcrossDates(
@@ -179,43 +238,32 @@ export function addToolCount(state: UsageState, date: string, tool: string, delt
   state.aggregates.perTool[date] = day;
 }
 
-export function pushEvent(state: UsageState, event: UsageEvent, ringSize: number): void {
-  // Most-recent-first ordering makes "what just happened" reads cheap.
+/**
+ * Push an event onto the in-memory ring. Returns any event evicted off the
+ * tail so the caller can archive it. Newest-first ordering makes "what just
+ * happened" reads cheap.
+ */
+export function pushEvent(
+  state: UsageState,
+  event: UsageEvent,
+  ringSize: number,
+): UsageEvent | null {
   state.events.unshift(event);
-  if (state.events.length > ringSize) {
-    state.events.length = ringSize;
+  if (ringSize <= 0) {
+    // ringSize=0 means "don't keep any in-memory history" — archive everything.
+    state.events.length = 0;
+    return event;
   }
+  if (state.events.length > ringSize) {
+    const evicted = state.events[ringSize] ?? null;
+    state.events.length = ringSize;
+    return evicted;
+  }
+  return null;
 }
 
 export function readIsoAsMs(iso: string | undefined): number | undefined {
   if (!iso) return undefined;
   const ms = Date.parse(iso);
   return Number.isNaN(ms) ? undefined : ms;
-}
-
-const MAX_DEDUP_HASHES_PER_KEY = 100;
-
-/**
- * SHA-256 prefix of normalized text — lower-cased, whitespace-collapsed. 128
- * bits is collision-proof enough for per-chat history.
- */
-export function hashText(text: string): string {
-  const normalized = text.trim().toLowerCase().replace(/\s+/g, " ");
-  return createHash("sha256").update(normalized).digest("hex").slice(0, 32);
-}
-
-export function hasDedupHash(state: UsageState, key: string, text: string): boolean {
-  const prior = state.recentSends[key];
-  if (!prior || prior.length === 0) return false;
-  return prior.includes(hashText(text));
-}
-
-export function pushDedupHash(state: UsageState, key: string, text: string): void {
-  const hash = hashText(text);
-  const prior = state.recentSends[key] ?? [];
-  // Newest-first FIFO, capped. Don't double-record if already there.
-  if (prior[0] === hash) return;
-  prior.unshift(hash);
-  if (prior.length > MAX_DEDUP_HASHES_PER_KEY) prior.length = MAX_DEDUP_HASHES_PER_KEY;
-  state.recentSends[key] = prior;
 }
