@@ -1,0 +1,67 @@
+{
+  "id": "openclaw-instantly",
+  "name": "OpenClaw Instantly",
+  "description": "Receives Instantly.ai webhooks, verifies a custom auth header, dedupes, and creates a TaskFlow per event for downstream agent handling. Future home for other Instantly integrations.",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "routePath": {
+        "type": "string",
+        "minLength": 1,
+        "default": "/plugins/instantly/webhook",
+        "description": "HTTP path where the gateway exposes the receiver."
+      },
+      "authHeader": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "secret"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Header name Instantly attaches to each POST. Configure in Instantly's webhook UI. Case-insensitive match."
+          },
+          "secret": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source", "provider", "id"],
+            "properties": {
+              "source": { "type": "string", "enum": ["env"] },
+              "provider": { "type": "string", "minLength": 1 },
+              "id": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      },
+      "sessionKey": {
+        "type": "string",
+        "default": "agent:main:main",
+        "description": "Session key whose TaskFlow queue receives created flows."
+      },
+      "controllerId": {
+        "type": "string",
+        "default": "openclaw-instantly/webhook",
+        "description": "Controller id stamped on created TaskFlows."
+      },
+      "notifyPolicy": {
+        "type": "string",
+        "enum": ["done_only", "state_changes", "silent"],
+        "default": "state_changes",
+        "description": "TaskFlow notify policy."
+      },
+      "dedupCapacity": {
+        "type": "integer",
+        "minimum": 100,
+        "default": 10000
+      },
+      "paused": {
+        "type": "boolean",
+        "default": false,
+        "description": "When true, authenticated requests still return 200 but no TaskFlow is created and the event is logged as dropped. Use to pause ingestion without unmounting the route or restarting the gateway."
+      }
+    },
+    "required": ["authHeader"]
+  }
+}
