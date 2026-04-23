@@ -19,6 +19,30 @@ export async function jitter(minMs: number, maxMs: number): Promise<void> {
   if (ms > 0) await sleep(ms);
 }
 
+/**
+ * Sleep for `totalMs`, but subdivide the wait into `intervalMs` chunks and
+ * invoke `onTick(remainingMs)` after each chunk. Emits an initial tick at the
+ * start too so harnesses know the wait has begun. Used by gate() to keep the
+ * agent tool-call "alive" during long spacing waits — most harnesses reset
+ * their per-tool timeout when they see a progress update.
+ */
+export async function sleepWithHeartbeat(
+  totalMs: number,
+  intervalMs: number,
+  onTick: (remainingMs: number) => void,
+): Promise<void> {
+  if (totalMs <= 0) return;
+  onTick(totalMs);
+  let remaining = totalMs;
+  const slice = Math.max(1, intervalMs);
+  while (remaining > 0) {
+    const chunk = Math.min(slice, remaining);
+    await sleep(chunk);
+    remaining -= chunk;
+    if (remaining > 0) onTick(remaining);
+  }
+}
+
 function resolveTimezone(tz: string): string | undefined {
   if (!tz || tz === "system") return undefined;
   return tz;
@@ -143,4 +167,27 @@ export function formatSeconds(sec: number): string {
   if (sec < 60) return `${sec}s`;
   if (sec < 3600) return `${Math.ceil(sec / 60)}m`;
   return `${(sec / 3600).toFixed(1)}h`;
+}
+
+/**
+ * First moment at or after `now` when the working-hours window opens. Null if
+ * currently in-window or if no valid minute was found within 8 days (which
+ * would imply `days` is empty — the config path should prevent that, but we
+ * don't crash on it). Uses minute-granularity search because the window is
+ * HH:MM, the weekday filter can create gaps, and analytic math gets ugly for
+ * overnight windows in arbitrary TZs.
+ */
+export function nextWorkingHoursStart(
+  wh: UnipileWorkingHours,
+  log: Log,
+  now = new Date(),
+): Date | null {
+  if (checkWorkingHours(wh, log, now).ok) return null;
+  const stepMs = 60 * 1000;
+  const horizon = 8 * 24 * 60; // minutes
+  for (let i = 1; i <= horizon; i++) {
+    const t = new Date(now.getTime() + i * stepMs);
+    if (checkWorkingHours(wh, log, t).ok) return t;
+  }
+  return null;
 }

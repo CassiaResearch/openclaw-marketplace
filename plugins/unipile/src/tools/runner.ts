@@ -1,15 +1,44 @@
 import type { Static, TSchema } from "@sinclair/typebox";
 import type { AnyAgentTool } from "openclaw/plugin-sdk/plugin-entry";
+import { wrapExternalContent } from "openclaw/plugin-sdk/security-runtime";
 import type { UnipileClient } from "unipile-node-sdk";
-import { UnipileLimitError, isIndeterminateSend, toToolError } from "../errors.js";
+import {
+  UnipileLimitError,
+  classifyError,
+  isIndeterminateSend,
+  toToolError,
+  type UnipileErrorCode,
+} from "../errors.js";
 import type { Log } from "../log.js";
-import type { RateLimiter } from "../rateLimit/index.js";
+import type { ProgressUpdate, RateLimiter } from "../rateLimit/index.js";
 import type { RateCategory, UnipileConfig } from "../types.js";
 
 export interface ToolResult {
   content: { type: "text"; text: string }[];
   details: unknown;
+  /**
+   * MCP-style flag telling the host that `content` describes an error, not a
+   * successful result. Agents can branch on this without having to parse the
+   * `[unipile:tool]` prefix text. Absent = success.
+   */
+  isError?: boolean;
+  /**
+   * Structured classification when `isError` is set. Lets the agent branch
+   * on the error class (rate_limit / not_connected / timeout / ...) without
+   * regex-parsing the free-form message text. See UnipileErrorCode.
+   */
+  errorCode?: UnipileErrorCode;
 }
+
+/**
+ * Progress-update callback the agent harness passes as the fourth positional
+ * argument to `execute`. We emit heartbeats during long spacing waits so the
+ * tool call stays visible and the harness's per-tool timeout resets.
+ *
+ * Re-exported from the rate-limit module so tool files only import from
+ * runner.ts. Matches pi-agent-core's `AgentToolUpdateCallback` shape.
+ */
+export type ToolProgressCallback = ProgressUpdate;
 
 export interface ToolContext {
   cfg: UnipileConfig;
@@ -26,17 +55,31 @@ export interface ExecuteOptions<T> {
   actualCost?: (result: T) => number;
   run: () => Promise<T>;
   /**
-   * When set, the runner checks `payload` against prior sends recorded under
-   * `key` and refuses the call if we've sent the same text before. On success
-   * or indeterminate outcome, the hash is recorded. Skip for bypass/read
-   * tools — this is strictly for write endpoints where LinkedIn flags
-   * repeated identical bodies as automation.
+   * If a waitable block (spacing / cooldown) would otherwise fail the call,
+   * the limiter is allowed to `sleep` up to this many seconds inside `gate()`
+   * before re-checking. Keeps batches draining at the natural pace instead of
+   * forcing the agent to orchestrate its own backoff. Budget / working-hours
+   * blocks ignore this and still throw immediately.
    */
-  dedup?: { key: string; payload: string };
+  waitUpToSec?: number;
+  /**
+   * Harness-supplied progress callback. When set and the gate has to sleep
+   * for a soft block, we emit periodic pings so the harness keeps the tool
+   * call live instead of timing it out.
+   */
+  onUpdate?: ToolProgressCallback;
 }
 
 export function textResult(text: string): ToolResult {
   return { content: [{ type: "text", text }], details: null };
+}
+
+export function errorResult(
+  text: string,
+  errorCode: UnipileErrorCode,
+  details: unknown = null,
+): ToolResult {
+  return { content: [{ type: "text", text }], details, isError: true, errorCode };
 }
 
 function serialize(value: unknown): string {
@@ -96,7 +139,18 @@ export interface UnipileToolDefinition<TParameters extends TSchema> {
   label: string;
   description: string;
   parameters: TParameters;
-  execute: (toolCallId: string, params: Static<TParameters>) => Promise<ToolResult>;
+  /**
+   * Execute the tool. Signature matches pi-agent-core's AgentTool.execute
+   * positionally — we accept an optional AbortSignal (currently unused;
+   * reserved for future cancellation plumbing) and an optional progress
+   * callback for heartbeats during long spacing waits.
+   */
+  execute: (
+    toolCallId: string,
+    params: Static<TParameters>,
+    signal?: AbortSignal,
+    onUpdate?: ToolProgressCallback,
+  ) => Promise<ToolResult>;
 }
 
 export function defineTool<TParameters extends TSchema>(
@@ -109,24 +163,33 @@ export function defineTool<TParameters extends TSchema>(
 }
 
 export function runUnipileTool<T>(ctx: ToolContext, opts: ExecuteOptions<T>): Promise<ToolResult> {
-  const { toolName, category, reservedCost = 1, cooldownKey, actualCost, run, dedup } = opts;
+  const {
+    toolName,
+    category,
+    reservedCost = 1,
+    cooldownKey,
+    actualCost,
+    run,
+    waitUpToSec,
+    onUpdate,
+  } = opts;
   const rule = ctx.limiter.getRule(category);
 
   const invoke = async (): Promise<ToolResult> => {
-    if (dedup && ctx.limiter.isDuplicateSend(dedup.key, dedup.payload)) {
-      const reason = `Duplicate message detected — the same text was already sent to this recipient. Rephrase before retrying; repeated identical bodies get flagged by LinkedIn as automation.`;
-      ctx.limiter.recordBlocked({ toolName, category, reason });
-      ctx.log.warn(`${toolName} blocked: duplicate payload`);
-      return textResult(`[unipile:${toolName}] ${reason}`);
-    }
-
     if (!rule.bypassAll) {
       try {
-        await ctx.limiter.gate({ toolName, category, cost: reservedCost, cooldownKey });
+        await ctx.limiter.gate({
+          toolName,
+          category,
+          cost: reservedCost,
+          cooldownKey,
+          waitUpToSec,
+          onUpdate,
+        });
       } catch (err) {
         if (err instanceof UnipileLimitError) {
           ctx.log.warn(`${toolName} blocked: ${err.message}`);
-          return textResult(`[unipile:${toolName}] ${err.message}`);
+          return errorResult(`[unipile:${toolName}] ${err.message}`, err.code);
         }
         throw err;
       }
@@ -136,17 +199,25 @@ export function runUnipileTool<T>(ctx: ToolContext, opts: ExecuteOptions<T>): Pr
     try {
       const result = await run();
       if (!rule.bypassAll) {
-        const cost = actualCost ? Math.max(0, actualCost(result)) : reservedCost;
+        // actualCost is caller-supplied; guard against NaN / -∞ / non-finite
+        // values so a buggy extractor can't poison the persisted counters.
+        const raw = actualCost ? actualCost(result) : reservedCost;
+        const cost = Number.isFinite(raw) ? Math.max(0, raw) : reservedCost;
         ctx.limiter.recordSuccess({
           toolName,
           category,
           cost,
+          reservedCost,
           cooldownKey,
           durationMs: Date.now() - startedAt,
         });
       }
-      if (dedup) ctx.limiter.recordSend(dedup.key, dedup.payload);
-      return textResult(serialize(result));
+      return textResult(
+        wrapExternalContent(serialize(result), {
+          source: "api",
+          sender: `linkedin via unipile (${toolName})`,
+        }),
+      );
     } catch (err) {
       const durationMs = Date.now() - startedAt;
       const msg = toToolError(err, toolName);
@@ -159,22 +230,27 @@ export function runUnipileTool<T>(ctx: ToolContext, opts: ExecuteOptions<T>): Pr
           toolName,
           category,
           cost: reservedCost,
+          reservedCost,
           cooldownKey,
           durationMs,
           indeterminate: true,
         });
-        // Record dedup hash too — the message may have landed, so block
-        // retries of the same text.
-        if (dedup) ctx.limiter.recordSend(dedup.key, dedup.payload);
         ctx.log.warn(`${toolName} indeterminate: ${msg}`);
-        return textResult(`[unipile:${toolName}] ${msg}`);
+        return errorResult(`[unipile:${toolName}] ${msg}`, "timeout", { indeterminate: true });
       }
 
       if (!rule.bypassAll) {
-        ctx.limiter.recordFailure({ toolName, category, err, cooldownKey, durationMs });
+        ctx.limiter.recordFailure({
+          toolName,
+          category,
+          reservedCost,
+          err,
+          cooldownKey,
+          durationMs,
+        });
       }
       ctx.log.warn(`${toolName} failed: ${msg}`);
-      return textResult(`[unipile:${toolName}] ${msg}`);
+      return errorResult(`[unipile:${toolName}] ${msg}`, classifyError(err));
     }
   };
 

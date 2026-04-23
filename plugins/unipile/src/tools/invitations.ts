@@ -30,6 +30,14 @@ const SendInvitationParams = Type.Object(
         description: `Optional connection note (≤${MAX_INVITATION_MESSAGE} chars).`,
       }),
     ),
+    waitSec: Type.Optional(
+      Type.Integer({
+        minimum: 0,
+        maximum: 300,
+        description:
+          "Maximum seconds this call may sleep inside the plugin waiting for the ≥90 s spacing window to clear (default 120). Pass 0 to fail fast with errorCode='spacing' instead — useful if your harness has a short per-tool timeout or if you're orchestrating pacing yourself.",
+      }),
+    ),
   },
   { additionalProperties: false },
 );
@@ -66,9 +74,9 @@ export function registerInvitationTools(api: OpenClawPluginApi, ctx: ToolContext
       name: "linkedin_send_invitation",
       label: "LinkedIn: send connection invitation",
       description:
-        "Send a LinkedIn connection request to a user. 'providerId' is the LinkedIn provider_id (member URN) of the target. Optional 'message' is capped at 300 characters (LinkedIn limit). Blocked outside working hours, ≥90 s spacing between sends, daily/weekly/monthly caps apply.",
+        "Send a LinkedIn connection request. `providerId` is the target's provider_id (member URN) — get it from linkedin_search result items, linkedin_get_profile, or linkedin_list_relations. Optional `message` is capped at 300 characters. Blocked outside working hours; writes are serialized and spaced ≥90 s apart with daily/weekly/monthly caps. By default the call waits up to 120 s for the spacing window and emits progress heartbeats every ~10 s (`details.status=\"waiting\"`, `secondsRemaining`, `readyAt`) so harnesses keep the tool call alive; override via `waitSec` if you prefer fail-fast. Returns `{ object: 'UserInvitationSent', invitation_id }`.",
       parameters: SendInvitationParams,
-      execute: async (_id, params) => {
+      execute: async (_id, params, _signal, onUpdate) => {
         // 300-char cap is enforced by the JSON schema (`maxLength`), so input
         // that exceeds it is rejected before execute() runs.
         const providerId = params.providerId.trim();
@@ -76,6 +84,13 @@ export function registerInvitationTools(api: OpenClawPluginApi, ctx: ToolContext
         return runUnipileTool(ctx, {
           toolName: "linkedin_send_invitation",
           category: "invitation_write",
+          // Default 120 s covers the 90 s spacing plus slack; agent can lower
+          // (even to 0) to match its own orchestration / timeout budget.
+          waitUpToSec: params.waitSec ?? 120,
+          // Forward the harness's progress callback so the limiter can emit
+          // heartbeats during the spacing wait — keeps the tool call visible
+          // instead of going dark for up to 120 s.
+          onUpdate,
           run: () =>
             client.users.sendInvitation(
               compact({
@@ -94,7 +109,7 @@ export function registerInvitationTools(api: OpenClawPluginApi, ctx: ToolContext
       name: "linkedin_list_invitations_sent",
       label: "LinkedIn: list sent invitations",
       description:
-        "List connection requests you've sent that are still pending. Subject to a 4 h polling cooldown to avoid automation fingerprints.",
+        "List connection requests you've sent that are still pending. Pass `limit` OR `cursor`, not both. Returns `{ items: [{ id, ...target }, ...], cursor }`. Subject to a 4 h polling cooldown.",
       parameters: PaginationParams,
       execute: async (_id, params) =>
         runUnipileTool(ctx, {
@@ -118,7 +133,7 @@ export function registerInvitationTools(api: OpenClawPluginApi, ctx: ToolContext
       name: "linkedin_list_invitations_received",
       label: "LinkedIn: list received invitations",
       description:
-        "List pending connection requests from other users. Each item includes the shared_secret needed by linkedin_handle_invitation. Subject to a 4 h polling cooldown.",
+        "List pending connection requests from other users. Returns `{ items: [{ id, specifics: { shared_secret }, ... }, ...], cursor }` — `id` + `specifics.shared_secret` from the same item are both required by linkedin_handle_invitation. Subject to a 4 h polling cooldown.",
       parameters: PaginationParams,
       execute: async (_id, params) => {
         const query: Record<string, string> = { account_id: cfg.accountId };
@@ -144,7 +159,7 @@ export function registerInvitationTools(api: OpenClawPluginApi, ctx: ToolContext
       name: "linkedin_handle_invitation",
       label: "LinkedIn: accept or decline a received invitation",
       description:
-        "Accept or decline a pending received invitation. Both invitationId and sharedSecret come from linkedin_list_invitations_received (items[].id and items[].specifics.shared_secret). Blocked outside working hours.",
+        "Accept or decline a pending received invitation. Pass both `invitationId` (items[].id) and `sharedSecret` (items[].specifics.shared_secret) from the same linkedin_list_invitations_received item. Blocked outside working hours.",
       parameters: HandleInvitationParams,
       execute: async (_id, params) =>
         runUnipileTool(ctx, {

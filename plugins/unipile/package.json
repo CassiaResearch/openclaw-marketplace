@@ -13,9 +13,10 @@
     "plugin"
   ],
   "license": "MIT",
-  "author": "CopilotAI",
+  "author": "Cassia Research",
   "files": [
     "src",
+    "skills",
     "openclaw.plugin.json",
     "README.md",
     "LICENSE"

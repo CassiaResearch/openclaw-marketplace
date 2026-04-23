@@ -49,7 +49,12 @@ const ListMessagesFromAttendeeParams = Type.Object(
 const SendMessageParams = Type.Object(
   {
     chatId: Type.String(),
-    text: Type.String({ minLength: 1 }),
+    text: Type.String({
+      minLength: 1,
+      maxLength: 8000,
+      description:
+        "Message body. LinkedIn rejects bodies larger than ~8000 chars with errorCode='content_invalid'.",
+    }),
   },
   { additionalProperties: false },
 );
@@ -58,10 +63,16 @@ const StartChatParams = Type.Object(
   {
     attendeeProviderIds: Type.Array(Type.String(), {
       minItems: 1,
-      description: "One or more recipient provider_ids (LinkedIn member IDs).",
+      description:
+        "Recipient provider_ids (LinkedIn member IDs). NOTE: passing multiple IDs creates ONE group chat, not one chat per recipient. For individual outreach to N people, call linkedin_start_chat N times.",
     }),
-    text: Type.String({ minLength: 1 }),
-    subject: Type.Optional(Type.String()),
+    text: Type.String({
+      minLength: 1,
+      maxLength: 8000,
+      description:
+        "Opening message body. LinkedIn rejects bodies larger than ~8000 chars with errorCode='content_invalid'. InMail bodies are further capped at ~2000 chars by LinkedIn.",
+    }),
+    subject: Type.Optional(Type.String({ maxLength: 200 })),
     searchType: Type.Optional(ChatSearchType),
     inmail: Type.Optional(
       Type.Boolean({
@@ -81,7 +92,7 @@ export function registerMessagingTools(api: OpenClawPluginApi, ctx: ToolContext)
       name: "linkedin_list_chats",
       label: "LinkedIn: list chats",
       description:
-        "List LinkedIn DM conversations for the connected account. Supports pagination and filtering by unread. Served from Unipile's cache; bypasses the rate limiter.",
+        "List LinkedIn DM conversations for the connected account. Pass `unread: true` for inbox triage. Each item's `id` is the chatId needed by linkedin_list_chat_messages and linkedin_send_message. Served from Unipile's cache; bypasses the rate limiter, but results can lag ~30–60 s behind LinkedIn — don't rely on this immediately after a send/start_chat to confirm delivery.",
       parameters: ListChatsParams,
       execute: async (_id, params) =>
         runUnipileTool(ctx, {
@@ -107,7 +118,7 @@ export function registerMessagingTools(api: OpenClawPluginApi, ctx: ToolContext)
       name: "linkedin_list_chat_messages",
       label: "LinkedIn: list messages in a chat",
       description:
-        "Fetch the message history of a LinkedIn DM thread. Requires chatId from linkedin_list_chats. Served from Unipile's cache; bypasses the rate limiter.",
+        "Fetch the message history of a LinkedIn DM thread. `chatId` comes from linkedin_list_chats. Each message's `sender_id` is a Unipile attendee_id (a chat-scoped identifier), NOT a LinkedIn provider_id — do not pass it to linkedin_send_invitation or linkedin_get_profile. Served from Unipile's cache; bypasses the rate limiter. Cache can lag ~30–60 s behind LinkedIn — a message just sent via linkedin_send_message may not appear immediately.",
       parameters: ListChatMessagesParams,
       execute: async (_id, params) =>
         runUnipileTool(ctx, {
@@ -157,14 +168,13 @@ export function registerMessagingTools(api: OpenClawPluginApi, ctx: ToolContext)
       name: "linkedin_send_message",
       label: "LinkedIn: reply in a chat",
       description:
-        "Send a text message in an existing LinkedIn DM thread. Blocked outside working hours. Use linkedin_start_chat to initiate a new conversation.",
+        "Send a text message in an existing LinkedIn DM thread. Blocked outside working hours. Use linkedin_start_chat to initiate a new conversation. Returns `{ object: 'MessageSent', message_id }`.",
       parameters: SendMessageParams,
       execute: async (_id, params) => {
         const text = normalizeOutboundText(params.text);
         return runUnipileTool(ctx, {
           toolName: "linkedin_send_message",
           category: "message_write",
-          dedup: { key: `msg:${params.chatId}`, payload: text },
           run: () => client.messaging.sendMessage({ chat_id: params.chatId, text }),
         });
       },
@@ -176,10 +186,14 @@ export function registerMessagingTools(api: OpenClawPluginApi, ctx: ToolContext)
       name: "linkedin_start_chat",
       label: "LinkedIn: start a new chat",
       description:
-        "Start a new LinkedIn DM. Provide one or more attendee provider_ids (LinkedIn member IDs) and the opening message. Defaults to the Sales Navigator messaging API when available. Blocked outside working hours. Note: `subject` is only rendered when sending as InMail (searchType='classic' + inmail=true); LinkedIn silently drops it for direct messages.",
+        "Start a new LinkedIn DM. Passing ONE attendee provider_id starts a 1-to-1 chat; passing multiple creates a single GROUP chat with all of them — for individual outreach to N people, call this tool N times. Defaults to the Sales Navigator messaging API on SN/Recruiter accounts, classic otherwise. Blocked outside working hours. Setting `inmail: true` forces the classic InMail path regardless of searchType (InMail doesn't exist on the SN messaging API). `subject` is only rendered for InMails; LinkedIn silently drops it for regular DMs. Returns `{ object: 'ChatStarted', chat_id, message_id }`.",
       parameters: StartChatParams,
       execute: async (_id, params) => {
-        const effectiveType = params.searchType ?? (salesLike ? "sales_navigator" : "classic");
+        // InMail only exists on the classic messaging path; if the caller asked
+        // for it on a SN-default account we must route through classic or the
+        // inmail flag is silently dropped.
+        const requestedType = params.searchType ?? (salesLike ? "sales_navigator" : "classic");
+        const effectiveType = params.inmail ? "classic" : requestedType;
         const text = normalizeOutboundText(params.text);
         const subject = params.subject ? normalizeOutboundText(params.subject) : undefined;
         const base = compact({
@@ -189,15 +203,9 @@ export function registerMessagingTools(api: OpenClawPluginApi, ctx: ToolContext)
           subject,
         });
 
-        // Sorted + joined so "same group + same text" gets blocked regardless
-        // of attendee order. Different recipients started individually get
-        // different keys — bulk template outreach is fine.
-        const dedupKey = `chat:${[...params.attendeeProviderIds].sort().join("|")}`;
-
         return runUnipileTool(ctx, {
           toolName: "linkedin_start_chat",
           category: "message_write",
-          dedup: { key: dedupKey, payload: text },
           run: () => {
             if (effectiveType === "sales_navigator") {
               return client.messaging.startNewChat({
