@@ -26,7 +26,7 @@
     {
       "name": "openclaw-instantly",
       "description": "Receives Instantly.ai webhooks, authenticates via a custom header, and creates a TaskFlow per event for downstream agent handling",
-      "source": "./plugins/openclaw-instantly"
+      "source": "./plugins/instantly"
     }
   ]
 }
