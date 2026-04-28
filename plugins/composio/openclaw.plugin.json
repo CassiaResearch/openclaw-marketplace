@@ -2,6 +2,16 @@
   "id": "copilotai-composio",
   "name": "Composio",
   "description": "Access 1000+ third-party tools via Composio (Gmail, Slack, GitHub, Notion, etc.)",
+  "version": "0.0.12",
+  "configContracts": {
+    "secretInputs": {
+      "bundledDefaultEnabled": false,
+      "paths": [
+        { "path": "consumerKey", "expected": "string" },
+        { "path": "apiKey", "expected": "string" }
+      ]
+    }
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
