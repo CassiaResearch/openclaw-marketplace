@@ -2,7 +2,7 @@
   "id": "copilotai-composio",
   "name": "Composio",
   "description": "Access 1000+ third-party tools via Composio (Gmail, Slack, GitHub, Notion, etc.)",
-  "version": "0.0.12",
+  "version": "0.0.13",
   "configContracts": {
     "secretInputs": {
       "bundledDefaultEnabled": false,
@@ -21,12 +21,34 @@
         "description": "Enable or disable the Composio integration"
       },
       "consumerKey": {
-        "type": "string",
-        "description": "Your Composio consumer key (ck_...) from dashboard.composio.dev/~/org/connect/clients/openclaw"
+        "description": "Your Composio consumer key (ck_...) from dashboard.composio.dev/~/org/connect/clients/openclaw",
+        "oneOf": [
+          { "type": "string" },
+          {
+            "type": "object",
+            "properties": {
+              "source": { "type": "string" },
+              "provider": { "type": "string" },
+              "id": { "type": "string" }
+            },
+            "required": ["source", "provider", "id"]
+          }
+        ]
       },
       "apiKey": {
-        "type": "string",
-        "description": "Your Composio API key (ak_...) from app.composio.dev/developers — enables per-user tool router sessions"
+        "description": "Your Composio API key (ak_...) from app.composio.dev/developers — enables per-user tool router sessions",
+        "oneOf": [
+          { "type": "string" },
+          {
+            "type": "object",
+            "properties": {
+              "source": { "type": "string" },
+              "provider": { "type": "string" },
+              "id": { "type": "string" }
+            },
+            "required": ["source", "provider", "id"]
+          }
+        ]
       },
       "userId": {
         "type": "string",
