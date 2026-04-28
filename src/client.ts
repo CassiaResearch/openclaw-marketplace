@@ -1,31 +1,14 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
-import type { ComposioConfig, McpClientLike } from "./types.js";
+import type { McpClientLike } from "./types.js";
 import { mcpClientCache, cacheKey } from "./state.js";
 
-export function getAuthHeaders(config: ComposioConfig): Record<string, string> {
-  if (config.apiKey) {
-    return { "x-api-key": config.apiKey };
-  }
-  return { "x-consumer-api-key": config.consumerKey };
-}
-
-export function getEffectiveMcpUrl(config: ComposioConfig): string {
-  if (!config.userId) return config.mcpUrl;
-  const url = new URL(config.mcpUrl);
-  url.searchParams.set("user_id", config.userId);
-  return url.toString();
-}
-
-export function getSharedMcpClient(config: ComposioConfig, logger: OpenClawPluginApi["logger"]): Promise<McpClientLike | null> {
-  const key = cacheKey(config.mcpUrl, config.consumerKey, config.apiKey, config.userId);
+export function getSharedMcpClient(mcpUrl: string, consumerKey: string, logger: OpenClawPluginApi["logger"]): Promise<McpClientLike | null> {
+  const key = cacheKey(mcpUrl, consumerKey);
   const existing = mcpClientCache.get(key);
   if (existing) {
     logger.debug?.("[composio] Reusing shared MCP client connection");
     return existing;
   }
-
-  const effectiveUrl = getEffectiveMcpUrl(config);
-  const headers = getAuthHeaders(config);
 
   const promise = (async (): Promise<McpClientLike | null> => {
     const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
@@ -34,8 +17,10 @@ export function getSharedMcpClient(config: ComposioConfig, logger: OpenClawPlugi
     );
     const client = new Client({ name: "openclaw", version: "1.0" });
     await client.connect(
-      new StreamableHTTPClientTransport(new URL(effectiveUrl), {
-        requestInit: { headers },
+      new StreamableHTTPClientTransport(new URL(mcpUrl), {
+        requestInit: {
+          headers: { "x-consumer-api-key": consumerKey },
+        },
       })
     );
     logger.debug?.("[composio] MCP client connected");

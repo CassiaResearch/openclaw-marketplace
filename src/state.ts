@@ -19,6 +19,6 @@ const state = (globalThis as Record<symbol, unknown>)[STATE_KEY] as ComposioStat
 export const toolsCache = state.toolsCache;
 export const mcpClientCache = state.mcpClientCache;
 
-export function cacheKey(mcpUrl: string, consumerKey: string, apiKey: string = "", userId: string = "") {
-  return `${mcpUrl}\0${consumerKey}\0${apiKey}\0${userId}`;
+export function cacheKey(mcpUrl: string, consumerKey: string) {
+  return `${mcpUrl}\0${consumerKey}`;
 }

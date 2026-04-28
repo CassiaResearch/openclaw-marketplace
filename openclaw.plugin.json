@@ -1,5 +1,5 @@
 {
-  "id": "copilotai-composio",
+  "id": "composio",
   "name": "Composio",
   "description": "Access 1000+ third-party tools via Composio (Gmail, Slack, GitHub, Notion, etc.)",
   "configSchema": {
@@ -13,14 +13,6 @@
       "consumerKey": {
         "type": "string",
         "description": "Your Composio consumer key (ck_...) from dashboard.composio.dev/~/org/connect/clients/openclaw"
-      },
-      "apiKey": {
-        "type": "string",
-        "description": "Your Composio API key (ak_...) from app.composio.dev/developers — enables per-user tool router sessions"
-      },
-      "userId": {
-        "type": "string",
-        "description": "Optional user ID for per-user Composio sessions (used with API key)"
       },
       "mcpUrl": {
         "type": "string",
@@ -37,15 +29,6 @@
       "label": "Consumer Key",
       "help": "Your Composio consumer key (ck_...) from dashboard.composio.dev/~/org/connect/clients/openclaw",
       "sensitive": true
-    },
-    "apiKey": {
-      "label": "API Key",
-      "help": "Your Composio API key (ak_...) from app.composio.dev/developers — enables per-user tool router sessions",
-      "sensitive": true
-    },
-    "userId": {
-      "label": "User ID",
-      "help": "Optional user ID for per-user Composio sessions (used with API key)"
     },
     "mcpUrl": {
       "label": "MCP Server URL",
