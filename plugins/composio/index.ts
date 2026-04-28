@@ -6,7 +6,7 @@ import { getSystemPrompt } from "./src/prompt.js";
 import { registerCli } from "./src/cli.js";
 
 const composioPlugin = {
-  id: "composio",
+  id: "copilotai-composio",
   name: "Composio",
   description: "Access 1000+ third-party tools via Composio (Gmail, Slack, GitHub, Notion, and more).",
   configSchema: composioPluginConfigSchema,
