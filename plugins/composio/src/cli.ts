@@ -27,7 +27,7 @@ function ask(rl: readline.Interface, question: string): Promise<string> {
   return new Promise((resolve) => rl.question(question, resolve));
 }
 
-function getPluginConfig(): { consumerKey?: string; apiKey?: string; userId?: string; mcpUrl?: string; enabled?: boolean } {
+function getPluginConfig(): { consumerKey?: string; mcpUrl?: string; enabled?: boolean } {
   const config = readConfig();
   const plugins = config.plugins as Record<string, unknown> | undefined;
   const entries = plugins?.entries as Record<string, unknown> | undefined;
@@ -35,9 +35,7 @@ function getPluginConfig(): { consumerKey?: string; apiKey?: string; userId?: st
   const cfg = entry?.config as Record<string, unknown> | undefined;
   return {
     consumerKey: (cfg?.consumerKey as string) || process.env.COMPOSIO_CONSUMER_KEY || undefined,
-    apiKey: (cfg?.apiKey as string) || process.env.COMPOSIO_API_KEY || undefined,
-    userId: (cfg?.userId as string) || process.env.COMPOSIO_USER_ID || undefined,
-    mcpUrl: (cfg?.mcpUrl as string) || process.env.COMPOSIO_MCP_URL || "https://connect.composio.dev/mcp",
+    mcpUrl: (cfg?.mcpUrl as string) || "https://connect.composio.dev/mcp",
     enabled: (entry?.enabled as boolean) ?? true,
   };
 }
@@ -53,69 +51,44 @@ export function registerCli(api: OpenClawPluginApi): void {
 
       cmd
         .command("setup")
-        .description("Configure Composio credentials")
+        .description("Configure Composio consumer key")
         .option("--key <consumerKey>", "Consumer key (ck_...) — skips interactive prompt")
-        .option("--api-key <apiKey>", "API key (ak_...) for per-user sessions")
-        .option("--user-id <userId>", "User ID for per-user Composio sessions")
-        .action(async (opts: { key?: string; apiKey?: string; userId?: string }) => {
+        .action(async (opts: { key?: string }) => {
           let consumerKey = opts.key?.trim();
-          let apiKey = opts.apiKey?.trim();
-          const userId = opts.userId?.trim();
 
-          if (!consumerKey && !apiKey) {
+          if (!consumerKey) {
             // Interactive mode
             console.log("\nComposio Setup\n");
-            console.log("Choose your credential type:");
-            console.log("  1. Consumer key (ck_...) — shared identity via dashboard.composio.dev");
-            console.log("  2. API key (ak_...) — per-user sessions via app.composio.dev/developers\n");
+            console.log("Get your consumer key from: https://dashboard.composio.dev/~/org/connect/clients/openclaw\n");
 
             const rl = readline.createInterface({
               input: process.stdin,
               output: process.stdout,
             });
 
-            const choice = (await ask(rl, "Enter 1 or 2: ")).trim();
+            consumerKey = (await ask(rl, "Enter your consumer key (ck_...): ")).trim();
+            rl.close();
 
-            if (choice === "2") {
-              apiKey = (await ask(rl, "Enter your API key (ak_...): ")).trim();
-              rl.close();
-              if (!apiKey) {
-                console.log("\nNo key provided. Setup cancelled.");
-                return;
-              }
-            } else {
-              consumerKey = (await ask(rl, "Enter your consumer key (ck_...): ")).trim();
-              rl.close();
-              if (!consumerKey) {
-                console.log("\nNo key provided. Setup cancelled.");
-                return;
-              }
+            if (!consumerKey) {
+              console.log("\nNo key provided. Setup cancelled.");
+              return;
             }
           }
 
-          if (consumerKey && !consumerKey.startsWith("ck_")) {
+          if (!consumerKey.startsWith("ck_")) {
             console.log("\nWarning: Consumer key should start with 'ck_'");
           }
-          if (apiKey && !apiKey.startsWith("ak_")) {
-            console.log("\nWarning: API key should start with 'ak_'");
-          }
 
-          // Save credentials
-          const configData: Record<string, unknown> = {};
-          if (consumerKey) configData.consumerKey = consumerKey;
-          if (apiKey) configData.apiKey = apiKey;
-          if (userId) configData.userId = userId;
-
+          // Set consumer key
           const config = readConfig();
           if (!config.plugins) config.plugins = {};
           const plugins = config.plugins as Record<string, unknown>;
           if (!plugins.entries) plugins.entries = {};
           const entries = plugins.entries as Record<string, unknown>;
-          const existingConfig = ((entries.composio as Record<string, unknown> ?? {}).config as Record<string, unknown>) ?? {};
           entries.composio = {
             ...(entries.composio as Record<string, unknown> ?? {}),
             enabled: true,
-            config: { ...existingConfig, ...configData },
+            config: { consumerKey },
           };
 
           // Ensure tools.alsoAllow includes composio (safe to create — additive only)
@@ -144,9 +117,7 @@ export function registerCli(api: OpenClawPluginApi): void {
           }
 
           console.log("\nDone. Saved to ~/.openclaw/openclaw.json");
-          if (consumerKey) console.log("  - Consumer key set");
-          if (apiKey) console.log("  - API key set");
-          if (userId) console.log("  - User ID set");
+          console.log("  - Consumer key set");
           console.log("  - Plugin enabled");
           console.log("  - Added 'composio' to tools.alsoAllow");
           console.log("\nRestart to apply: openclaw gateway restart\n");
@@ -157,37 +128,23 @@ export function registerCli(api: OpenClawPluginApi): void {
         .description("Show Composio plugin configuration")
         .action(async () => {
           const cfg = getPluginConfig();
+          const envKey = process.env.COMPOSIO_CONSUMER_KEY;
 
           console.log("\nComposio Status\n");
 
-          if (!cfg.consumerKey && !cfg.apiKey) {
-            console.log("  Credentials:   not configured");
+          if (!cfg.consumerKey) {
+            console.log("  Consumer key:  not configured");
             console.log("\n  Run: openclaw composio setup\n");
             return;
           }
 
-          if (cfg.consumerKey) {
-            const key = cfg.consumerKey;
-            const source = process.env.COMPOSIO_CONSUMER_KEY ? "environment" : "config";
-            const masked = key.length > 12
-              ? `${key.slice(0, 6)}...${key.slice(-4)}`
-              : `${key.slice(0, 3)}...`;
-            console.log(`  Consumer key:  ${masked} (from ${source})`);
-          }
+          const key = cfg.consumerKey;
+          const source = envKey ? "environment" : "config";
+          const masked = key.length > 12
+            ? `${key.slice(0, 6)}...${key.slice(-4)}`
+            : `${key.slice(0, 3)}...`;
 
-          if (cfg.apiKey) {
-            const key = cfg.apiKey;
-            const source = process.env.COMPOSIO_API_KEY ? "environment" : "config";
-            const masked = key.length > 12
-              ? `${key.slice(0, 6)}...${key.slice(-4)}`
-              : `${key.slice(0, 3)}...`;
-            console.log(`  API key:       ${masked} (from ${source})`);
-          }
-
-          if (cfg.userId) {
-            console.log(`  User ID:       ${cfg.userId}`);
-          }
-
+          console.log(`  Consumer key:  ${masked} (from ${source})`);
           console.log(`  Enabled:       ${cfg.enabled}`);
           console.log(`  MCP URL:       ${cfg.mcpUrl}`);
           console.log("");
@@ -201,52 +158,28 @@ export function registerCli(api: OpenClawPluginApi): void {
 
           console.log("\nComposio Doctor\n");
 
-          if (!cfg.consumerKey && !cfg.apiKey) {
-            console.log("  Credentials:   not configured");
+          if (!cfg.consumerKey) {
+            console.log("  Consumer key:  not configured");
             console.log("\n  Run: openclaw composio setup\n");
             return;
           }
 
-          if (cfg.consumerKey) {
-            const key = cfg.consumerKey;
-            const masked = key.length > 12
-              ? `${key.slice(0, 6)}...${key.slice(-4)}`
-              : `${key.slice(0, 3)}...`;
-            console.log(`  Consumer key:  ${masked}`);
-          }
-          if (cfg.apiKey) {
-            const key = cfg.apiKey;
-            const masked = key.length > 12
-              ? `${key.slice(0, 6)}...${key.slice(-4)}`
-              : `${key.slice(0, 3)}...`;
-            console.log(`  API key:       ${masked}`);
-          }
-          if (cfg.userId) {
-            console.log(`  User ID:       ${cfg.userId}`);
-          }
-
-          // Compute effective URL and auth header
-          let effectiveUrl = cfg.mcpUrl!;
-          if (cfg.userId) {
-            const url = new URL(effectiveUrl);
-            url.searchParams.set("user_id", cfg.userId);
-            effectiveUrl = url.toString();
-          }
-
-          const authHeaderName = cfg.apiKey ? "x-api-key" : "x-consumer-api-key";
-          const authHeaderValue = cfg.apiKey || cfg.consumerKey!;
-
-          console.log(`  MCP URL:       ${effectiveUrl}`);
+          const key = cfg.consumerKey;
+          const masked = key.length > 12
+            ? `${key.slice(0, 6)}...${key.slice(-4)}`
+            : `${key.slice(0, 3)}...`;
+          console.log(`  Consumer key:  ${masked}`);
+          console.log(`  MCP URL:       ${cfg.mcpUrl}`);
 
           // Test tool fetch
           console.log("\n  Fetching tools...");
           try {
             const body = JSON.stringify({ jsonrpc: "2.0", id: "1", method: "tools/list" });
             const raw = execFileSync("curl", [
-              effectiveUrl, "-s", "-X", "POST",
+              cfg.mcpUrl!, "-s", "-X", "POST",
               "-H", "Content-Type: application/json",
               "-H", "Accept: application/json, text/event-stream",
-              "-H", `${authHeaderName}: ${authHeaderValue}`,
+              "-H", `x-consumer-api-key: ${cfg.consumerKey}`,
               "-d", body,
             ], { encoding: "utf-8", timeout: 15_000 });
 
@@ -257,7 +190,7 @@ export function registerCli(api: OpenClawPluginApi): void {
             const parsed = JSON.parse(jsonStr);
             if (parsed.error) {
               console.log(`\n  Connection failed: ${parsed.error.message ?? JSON.stringify(parsed.error)}`);
-              console.log("\n  Check your credentials and try again.\n");
+              console.log("\n  Check your consumer key and try again.\n");
               return;
             }
 
@@ -278,7 +211,7 @@ export function registerCli(api: OpenClawPluginApi): void {
             const msg = err instanceof Error ? err.message : String(err);
             console.log(`\n  Connection failed: ${msg}`);
             console.log("\n  Possible causes:");
-            console.log("    - Invalid credentials (consumer key or API key)");
+            console.log("    - Invalid consumer key");
             console.log("    - Network issue reaching connect.composio.dev");
             console.log("    - curl not available on PATH\n");
           }

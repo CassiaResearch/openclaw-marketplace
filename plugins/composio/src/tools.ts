@@ -4,14 +4,13 @@ import { readFileSync, writeFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import type { ComposioConfig, Tool, McpClientLike } from "./types.js";
+import type { Tool, McpClientLike } from "./types.js";
 import { toolsCache, cacheKey } from "./state.js";
-import { getAuthHeaders, getEffectiveMcpUrl } from "./client.js";
 
 const DISK_CACHE_TTL_MS = 300_000;
 
-function diskCachePath(config: ComposioConfig): string {
-  const hash = createHash("sha256").update(`${config.mcpUrl}\0${config.consumerKey}\0${config.apiKey}\0${config.userId}`).digest("hex").slice(0, 16);
+function diskCachePath(mcpUrl: string, consumerKey: string): string {
+  const hash = createHash("sha256").update(`${mcpUrl}\0${consumerKey}`).digest("hex").slice(0, 16);
   return join(tmpdir(), `composio-tools-${hash}.json`);
 }
 
@@ -29,20 +28,13 @@ function writeDiskCache(filePath: string, tools: Tool[]): void {
   try { writeFileSync(filePath, JSON.stringify(tools)); } catch {}
 }
 
-function fetchToolsSync(config: ComposioConfig): Tool[] {
-  const effectiveUrl = getEffectiveMcpUrl(config);
-  const authHeaders = getAuthHeaders(config);
-  const headerArgs: string[] = [];
-  for (const [key, value] of Object.entries(authHeaders)) {
-    headerArgs.push("-H", `${key}: ${value}`);
-  }
-
+function fetchToolsSync(mcpUrl: string, consumerKey: string): Tool[] {
   const body = JSON.stringify({ jsonrpc: "2.0", id: "1", method: "tools/list" });
   const raw = execFileSync("curl", [
-    effectiveUrl, "-s", "-X", "POST",
+    mcpUrl, "-s", "-X", "POST",
     "-H", "Content-Type: application/json",
     "-H", "Accept: application/json, text/event-stream",
-    ...headerArgs,
+    "-H", `x-consumer-api-key: ${consumerKey}`,
     "-d", body,
   ], { encoding: "utf-8", timeout: 15_000 });
 
@@ -55,8 +47,8 @@ function fetchToolsSync(config: ComposioConfig): Tool[] {
   return (parsed.result?.tools ?? []) as Tool[];
 }
 
-export function getCachedTools(config: ComposioConfig, logger: OpenClawPluginApi["logger"]): { tools: Tool[]; error?: string } {
-  const key = cacheKey(config.mcpUrl, config.consumerKey, config.apiKey, config.userId);
+export function getCachedTools(mcpUrl: string, consumerKey: string, logger: OpenClawPluginApi["logger"]): { tools: Tool[]; error?: string } {
+  const key = cacheKey(mcpUrl, consumerKey);
 
   const memCached = toolsCache.get(key);
   if (memCached) {
@@ -64,7 +56,7 @@ export function getCachedTools(config: ComposioConfig, logger: OpenClawPluginApi
     return memCached;
   }
 
-  const filePath = diskCachePath(config);
+  const filePath = diskCachePath(mcpUrl, consumerKey);
   const diskTools = readDiskCache(filePath);
   if (diskTools) {
     const entry = { tools: diskTools };
@@ -73,9 +65,9 @@ export function getCachedTools(config: ComposioConfig, logger: OpenClawPluginApi
     return entry;
   }
 
-  logger.debug?.(`[composio] Fetching tools from ${config.mcpUrl}`);
+  logger.debug?.(`[composio] Fetching tools from ${mcpUrl}`);
   try {
-    const tools = fetchToolsSync(config);
+    const tools = fetchToolsSync(mcpUrl, consumerKey);
     const entry = { tools };
     toolsCache.set(key, entry);
     writeDiskCache(filePath, tools);
@@ -104,7 +96,7 @@ export function registerTools(
         const client = await mcpReady;
         if (!client) {
           return {
-            content: [{ type: "text" as const, text: "Error: Composio MCP client failed to connect. Check your credentials and try restarting the gateway." }],
+            content: [{ type: "text" as const, text: "Error: Composio MCP client failed to connect. Check your consumer key and try restarting the gateway." }],
             details: null,
           };
         }

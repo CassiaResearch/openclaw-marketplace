@@ -59,8 +59,8 @@ function diagnoseError(error: string): { reason: string; userMessage: string } {
 
   if (lower.includes("unauthorized") || lower.includes("401") || (lower.includes("invalid") && lower.includes("key"))) {
     return {
-      reason: "The credential (consumer key or API key) was rejected by the Composio server.",
-      userMessage: "The Composio credential is invalid or expired. Get a new key from dashboard.composio.dev, then run:\n`openclaw composio setup`\n`openclaw gateway restart`",
+      reason: "The consumer key was rejected by the Composio server.",
+      userMessage: "The Composio consumer key is invalid or expired. Get a new key from dashboard.composio.dev/~/org/connect/clients/openclaw, then run:\n`openclaw composio setup --key ck_your_new_key`\n`openclaw gateway restart`",
     };
   }
 
@@ -81,7 +81,7 @@ function diagnoseError(error: string): { reason: string; userMessage: string } {
   if (lower.includes("403") || lower.includes("forbidden")) {
     return {
       reason: "The server rejected the request (403 Forbidden).",
-      userMessage: "The Composio server rejected the request. Your credentials may not have access. Check your key and account at dashboard.composio.dev, then run: `openclaw gateway restart`",
+      userMessage: "The Composio server rejected the request. Your consumer key may not have access. Check your key and account at dashboard.composio.dev, then run: `openclaw gateway restart`",
     };
   }
 
