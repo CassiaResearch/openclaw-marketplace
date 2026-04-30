@@ -2,8 +2,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { appendEvent, loadLedger, saveLedger, type StoreOptions } from "./store.js";
-import type { LedgerEvent, PluginConfig } from "./types.js";
+import { appendEvent, loadLedger, saveLedger, type StoreOptions } from "../src/store.js";
+import type { LedgerEvent, PluginConfig } from "../src/types.js";
 
 function baseConfig(overrides: Partial<PluginConfig["retention"]> = {}): PluginConfig {
   return {

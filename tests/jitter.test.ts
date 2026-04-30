@@ -4,9 +4,9 @@ import {
   maybeMicroPauseSeconds,
   nextOpenWorkingInstant,
   sampleJitterSeconds,
-} from "./jitter.js";
+} from "../src/jitter.js";
 import { median, mulberry32 } from "./test-util.js";
-import type { JitterConfig, MailboxPolicy } from "./types.js";
+import type { JitterConfig, MailboxPolicy } from "../src/types.js";
 
 const baseJitter: JitterConfig = {
   enabled: true,

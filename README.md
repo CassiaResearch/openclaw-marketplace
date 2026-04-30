@@ -2,7 +2,7 @@
 
 OpenClaw plugin that keeps track of your inbox, and adds a layer of protection for sending cold emails so that your account doesn't get banned or blacklisted.
 
-> **Status:** v0.1.0. The decision engine, ledger, jitter, working-hours gate, suppression, retention, and the `send-email-safe` skill are implemented and unit-tested. Ingestion adapters and a few rate-window features are partial — see [Implementation status](#implementation-status) before relying on a specific tripwire firing.
+> **Status:** v0.1.1. The decision engine, ledger, jitter, working-hours gate, suppression, retention, and the `send-email-safe` skill are implemented and unit-tested. Ingestion adapters and a few rate-window features are partial — see [Implementation status](#implementation-status) before relying on a specific tripwire firing.
 
 ## What it does
 
@@ -26,9 +26,10 @@ The plugin does not send email. It decides.
 | Working-hours gate (`defer` outside hours) | ✅ shipped | Per-mailbox timezone, working days, working hours |
 | Daily and hourly send caps | ✅ shipped | Counts calls (not weighted cost — see below) |
 | Suppression list (global per mailbox) | ✅ shipped | Cross-mailbox suppression is not yet implemented |
-| Manual mailbox pause (`pausedUntil`) | ✅ shipped | Set by tripwire `pause-mailbox` action |
-| Tripwires — `{ hours, minSends }` window | ✅ shipped | Used by `bounceRateSlowRot` |
+| Manual mailbox pause (`pausedUntil`) | ✅ shipped | Honored by `checkSend` when set on the ledger; the plugin does not currently write it automatically (operator-driven) |
+| Tripwires — `{ hours, minSends }` window | ✅ shipped | Used by `bounceRateSlowRot`; `minSends` defaults to `1` if omitted |
 | Tripwires — `{ sends: N }` window | ✅ shipped | Outcomes attributed to the most recent prior send to the same recipient |
+| Tripwire `pause-mailbox` action | ✅ shipped | Causes `checkSend` to `deny` while the rule fires; does not persist `pausedUntil`, so the deny is transient and lifts as soon as the rule no longer matches |
 | `send-email-safe` skill | ✅ shipped | Bundled in `skills/`, referenced from `openclaw.plugin.json` |
 | Ingestion adapters (Gmail Pub/Sub, Gmail polling) | ❌ not yet | Config schema and types exist; `index.ts` logs "not yet implemented" per configured adapter and no events flow in. Until adapters land, call `email_warden_record_event` from your own bridge. |
 | `cost` weighting in caps | ❌ not yet | `cost` parameter is accepted and stored on the event but caps are evaluated by call count |
@@ -86,7 +87,7 @@ Ask the warden whether a proposed send is permitted.
 Returns one of:
 
 - `{ decision: "allow", class }`
-- `{ decision: "defer", class, sendAfter, reason }` — `sendAfter` is ISO 8601; `reason` is one of `min-gap` / `jitter` / `micro-pause` / `working-hours`
+- `{ decision: "defer", class, sendAfter, reason }` — `sendAfter` is ISO 8601; `reason` is one of `min-gap` / `jitter` / `micro-pause` / `working-hours`, or `pacing` as a fallback
 - `{ decision: "deny", reason }` — paused mailbox, hard-pause tripwire, or daily/hourly cap reached
 - `{ decision: "suppressed", reason }` — recipient is on the suppression list
 
@@ -122,8 +123,10 @@ Record an inbound event observed for a previously-sent message. Called by an ing
 Mirrors the shape used by `openclaw-unipile` at `unipile/<accountId>/usage.json`. email-warden persists to:
 
 ```
-<openclaw-root>/plugins/email-warden/<mailboxAddress>/usage.json
+<openclaw-root>/plugins/<stateDir>/<sanitizedMailbox>/usage.json
 ```
+
+`stateDir` defaults to `email-warden`. `sanitizedMailbox` is the mailbox address lowercased with any character outside `[a-z0-9@._-]` replaced by `_`, so e.g. `Emma+x@CoPilotAI.com` becomes `emma_x@copilotai.com`.
 
 Daily aggregates are keyed by `EventCategory` (`send`, `bounce`, `reply`, `complaint`, `unsubscribe`) — *not* by traffic class. The class is recorded on each event in `events[]`, so per-class rates are computed from the event log.
 
@@ -325,6 +328,8 @@ Ingestion adapters (Gmail Pub/Sub, Gmail polling) are scaffolded but not impleme
 - **Per-recipient-domain throttle is data-only.** Counts are tracked in `aggregates.perRecipientDomain` but `checkSend` doesn't gate on `policy.limits.perRecipientDomainPerHour` yet.
 - **Suppression is per-mailbox.** A recipient who unsubscribed from mailbox A can still be emailed from mailbox B. If you're rotating multiple GWS accounts in a campaign, dedupe at the campaign-runner level until cross-mailbox suppression lands.
 - **Tripwire actions other than `pause-mailbox` are emitted but not enforced.** `pause-warmup`, `pause-campaign`, and `suppress-recipient` are in the schema and the evaluator returns them, but `checkSend` only short-circuits on `pause-mailbox`. Treat the others as alerting-only for now.
+- **`pause-mailbox` does not persist.** When a tripwire with `action: "pause-mailbox"` fires, `checkSend` returns `deny` for the duration the rule keeps matching, but the plugin does not write `pausedUntil` to the ledger. As soon as enough fresh events shift the rule's window, the deny lifts automatically. Use the `pausedUntil` field as an operator-set hard pause — nothing in the plugin writes it for you.
+- **`suppression.honorUnsubscribeWithinHours` is config-only.** The field is accepted (and defaults to 48) but no code path reads it. Today, any `unsubscribe` event adds the recipient to the suppression list immediately, regardless of how recent the originating send was.
 - **No Slack delivery.** `alerts.slackChannel`, `alerts.onPause`, `alerts.onDailyRollup` are config-only — nothing posts to Slack yet. To get notified, watch the per-mailbox `usage.json` or wrap the tools.
 
 ## Open questions

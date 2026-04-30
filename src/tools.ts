@@ -6,6 +6,12 @@ import { KNOWN_TRAFFIC_CLASSES, type PluginConfig } from "./types.js";
 
 const TrafficClassEnum = Type.Union(KNOWN_TRAFFIC_CLASSES.map((c) => Type.Literal(c)));
 
+/**
+ * Build the `email_warden_check_send` agent tool. Wraps `checkSend` so the
+ * agent can ask the warden whether a proposed send is permitted; the tool
+ * returns the raw `Decision` (`allow` | `defer` | `deny` | `suppressed`)
+ * as JSON. `config` and `store` are captured at registration time.
+ */
 export function createCheckSendTool(config: PluginConfig, store: StoreOptions) {
   return {
     name: "email_warden_check_send",
@@ -41,6 +47,12 @@ export function createCheckSendTool(config: PluginConfig, store: StoreOptions) {
   };
 }
 
+/**
+ * Build the `email_warden_record_send` agent tool. Wraps `recordSend` and
+ * is intended to be called immediately after the underlying send tool
+ * resolves (success or error), with the `class` returned by the prior
+ * `check_send` decision so aggregates and tripwires stay consistent.
+ */
 export function createRecordSendTool(config: PluginConfig, store: StoreOptions) {
   return {
     name: "email_warden_record_send",
@@ -83,6 +95,12 @@ export function createRecordSendTool(config: PluginConfig, store: StoreOptions) 
   };
 }
 
+/**
+ * Build the `email_warden_record_event` agent tool. Wraps
+ * `recordExternalEvent` for inbound events (bounce, reply, complaint,
+ * unsubscribe). Typically driven by the Gmail Pub/Sub ingestion adapter,
+ * not by the agent directly.
+ */
 export function createRecordEventTool(config: PluginConfig, store: StoreOptions) {
   return {
     name: "email_warden_record_event",

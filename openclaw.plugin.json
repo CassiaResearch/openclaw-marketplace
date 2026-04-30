@@ -1,6 +1,6 @@
 {
-  "id": "email-warden",
-  "name": "Email Warden",
+  "id": "copilotai-email-warden",
+  "name": "Email Warden by CoPilot AI",
   "description": "Outbound email governance: rate limits, lognormal jitter, working-hours gates, traffic-class policy, bounce/reply/complaint tripwires, and a per-mailbox usage ledger.",
   "skills": ["./skills"],
   "activation": {

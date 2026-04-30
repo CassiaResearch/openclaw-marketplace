@@ -153,6 +153,12 @@ export type MailboxLedger = {
   lastCooldownAt: Record<string, string>;
   suppressed: Array<{ recipient: string; reason: string; at: string }>;
   events: LedgerEvent[];
+  pendingSendReservation?: {
+    sendAfter: string;
+    reason: string;
+    reservedAt: string;
+    afterLastSend: string | null;
+  };
 };
 
 export type Decision =
