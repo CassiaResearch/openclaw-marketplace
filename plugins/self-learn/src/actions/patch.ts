@@ -26,12 +26,8 @@ export function executePatch(
     return { success: false, error: `Could not find the specified text in '${name}/SKILL.md'. Verify the exact text to replace.` };
   }
 
-  let count = 0;
-  let patched = original;
-  while (patched.includes(find)) {
-    patched = patched.replace(find, replace);
-    count++;
-  }
+  const count = original.split(find).length - 1;
+  const patched = original.replaceAll(find, replace);
 
   const fmCheck = validateFrontmatter(patched);
   if (!fmCheck.valid) {
