@@ -1,5 +1,10 @@
 import type { JitterConfig, MailboxPolicy } from "./types.js";
 
+/**
+ * Draw a single jitter delay in seconds from the configured distribution
+ * (uniform or lognormal), clamped to `clampSeconds`. Returns `0` when jitter
+ * is disabled. `rng` defaults to `Math.random`; pass a seeded RNG for tests.
+ */
 export function sampleJitterSeconds(jitter: JitterConfig, rng: () => number = Math.random): number {
   if (!jitter.enabled) return 0;
   const raw =
@@ -9,6 +14,12 @@ export function sampleJitterSeconds(jitter: JitterConfig, rng: () => number = Ma
   return clamp(raw, jitter.clampSeconds.min, jitter.clampSeconds.max);
 }
 
+/**
+ * With probability `jitter.microPause.probability`, return a longer "human
+ * coffee break" pause in seconds drawn uniformly from
+ * `jitter.microPause.durationSeconds`. Otherwise (or when jitter is disabled)
+ * returns `0`. Composes additively with `sampleJitterSeconds`.
+ */
 export function maybeMicroPauseSeconds(jitter: JitterConfig, rng: () => number = Math.random): number {
   if (!jitter.enabled) return 0;
   if (rng() >= jitter.microPause.probability) return 0;
@@ -36,6 +47,13 @@ const DAY_TO_INDEX: Record<string, number> = {
   sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6,
 };
 
+/**
+ * Return the earliest instant at or after `after` that falls inside the
+ * mailbox's working window (working day, between `workingHours.start` and
+ * `workingHours.end` in `timezone`). If `after` already lies inside an open
+ * window, it is returned unchanged. Searches up to 14 days forward; if no
+ * open instant is found, returns `after`.
+ */
 export function nextOpenWorkingInstant(
   after: Date,
   policy: Pick<MailboxPolicy, "timezone" | "workingHours" | "workingDays">,
@@ -69,6 +87,11 @@ export function nextOpenWorkingInstant(
   return after;
 }
 
+/**
+ * `true` when `at` is inside the mailbox's working window (working day and
+ * between configured `workingHours` in `timezone`). Implemented in terms of
+ * `nextOpenWorkingInstant` with a one-second tolerance.
+ */
 export function isWithinWorkingHours(
   at: Date,
   policy: Pick<MailboxPolicy, "timezone" | "workingHours" | "workingDays">,

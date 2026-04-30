@@ -8,6 +8,21 @@ export type TripwireHit = {
 
 type OutcomeCounts = { bounces: number; complaints: number; replies: number };
 
+/**
+ * Evaluate every configured tripwire against `ledger` and return the hits
+ * (rules whose `maxRate`/`minRate` threshold is breached). Two window styles
+ * are supported per rule:
+ *
+ * - `{ sends: N }`              — last N successful sends; outcomes are
+ *                                 attributed to the most recent send to the
+ *                                 same recipient.
+ * - `{ hours: H, minSends: M }` — counts within the last H hours, requiring
+ *                                 at least M sends before evaluation.
+ *
+ * The kind of rate (`bounce`, `complaint`/`spam`, `reply`) is inferred from
+ * the rule name; rules whose name matches none of those return no hit. Pure:
+ * mutates nothing on the ledger.
+ */
 export function evaluateTripwires(
   ledger: MailboxLedger,
   config: PluginConfig,

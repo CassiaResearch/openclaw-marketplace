@@ -15,6 +15,24 @@ import {
 
 const CLASSES_WITH_FULL_PACING = new Set<TrafficClass>(["cold_outbound", "warmup_send", "follow_up"]);
 
+/**
+ * Decide whether a proposed send is permitted right now for `input.mailbox`.
+ *
+ * Resolves the traffic class (forced to `cold_outbound` if `campaignContext`
+ * is set; falls back to `cold_outbound` for unknown values — fail-closed),
+ * loads the per-mailbox ledger, and returns one of:
+ *
+ * - `suppressed` — recipient is on the suppression list.
+ * - `deny`       — mailbox is paused, a tripwire pause has fired, or a
+ *                  daily/hourly send cap is exhausted.
+ * - `defer`      — pacing (min-gap, jitter, micro-pause, or working-hours
+ *                  gate) pushes the next send into the future; `sendAfter`
+ *                  is an ISO timestamp the caller should respect.
+ * - `allow`      — caller may send immediately.
+ *
+ * Pure with respect to ledger state — does not record anything; pair with
+ * `recordSend` after the underlying send completes.
+ */
 export async function checkSend(
   input: CheckSendInput,
   config: PluginConfig,
@@ -42,19 +60,29 @@ export async function checkSend(
   const limitDeny = checkGlobalLimits(ledger, policy, now);
   if (limitDeny) return limitDeny;
 
-  const sendAfter = computeSendAfter(resolvedClass, policy, config, ledger, now);
-  if (sendAfter.getTime() > now.getTime() + 1000) {
+  const paced = computeSendAfter(resolvedClass, policy, config, ledger, now);
+  if (paced.persist) {
+    ledger.pendingSendReservation = paced.reservation;
+    await saveLedger(store, ledger);
+  }
+  if (paced.sendAfter.getTime() > now.getTime() + 1000) {
     return {
       decision: "defer",
       class: resolvedClass,
-      sendAfter: sendAfter.toISOString(),
-      reason: sendAfter.reason ?? "pacing",
+      sendAfter: paced.sendAfter.toISOString(),
+      reason: paced.reason ?? "pacing",
     };
   }
 
   return { decision: "allow", class: resolvedClass };
 }
 
+/**
+ * Append a `send` event (success or error) to the mailbox ledger and persist.
+ * Call this immediately after the underlying send completes, passing the
+ * traffic class returned by `checkSend` so aggregates and tripwires stay
+ * consistent. `cost` defaults to `1`.
+ */
 export async function recordSend(
   input: RecordSendInput,
   config: PluginConfig,
@@ -77,9 +105,17 @@ export async function recordSend(
     },
     config,
   );
+  delete ledger.pendingSendReservation;
   await saveLedger(store, ledger);
 }
 
+/**
+ * Record an inbound event (`bounce`, `reply`, `complaint`, or
+ * `unsubscribe`) observed for a previously-sent message. For `bounce` and
+ * `unsubscribe` the recipient is added to the mailbox suppression list (if
+ * not already present). Typically driven by an ingestion adapter (e.g.
+ * Gmail Pub/Sub), not by the agent directly.
+ */
 export async function recordExternalEvent(
   input: RecordEventInput,
   config: PluginConfig,
@@ -164,7 +200,12 @@ function checkGlobalLimits(
   return null;
 }
 
-type AugmentedDate = Date & { reason?: string };
+type PacedDecision = {
+  sendAfter: Date;
+  reason?: string;
+  persist: boolean;
+  reservation?: NonNullable<MailboxLedger["pendingSendReservation"]>;
+};
 
 function computeSendAfter(
   cls: TrafficClass,
@@ -172,7 +213,7 @@ function computeSendAfter(
   config: PluginConfig,
   ledger: MailboxLedger,
   now: Date,
-): AugmentedDate {
+): PacedDecision {
   const minGapSeconds = policy.limits.send.minGapSeconds;
   const lastSendIso = ledger.lastCallAt.send;
   let earliest = now.getTime();
@@ -186,24 +227,46 @@ function computeSendAfter(
     }
   }
 
-  if (CLASSES_WITH_FULL_PACING.has(cls)) {
-    const jitter = sampleJitterSeconds(config.jitter) * 1000;
-    const micro = maybeMicroPauseSeconds(config.jitter) * 1000;
-    if (jitter + micro > 0) {
-      earliest = Math.max(earliest, now.getTime() + jitter + micro);
+  if (!CLASSES_WITH_FULL_PACING.has(cls)) {
+    return { sendAfter: new Date(earliest), reason, persist: false };
+  }
+
+  const existing = ledger.pendingSendReservation;
+  const fingerprint = lastSendIso ?? null;
+  const reservationFresh = existing && (existing.afterLastSend ?? null) === fingerprint;
+
+  if (reservationFresh) {
+    const reservedMs = Date.parse(existing.sendAfter);
+    if (reservedMs > earliest) {
+      earliest = reservedMs;
+      reason = existing.reason;
+    }
+    return { sendAfter: new Date(earliest), reason, persist: false };
+  }
+
+  const jitter = sampleJitterSeconds(config.jitter) * 1000;
+  const micro = maybeMicroPauseSeconds(config.jitter) * 1000;
+  if (jitter + micro > 0) {
+    const candidate = now.getTime() + jitter + micro;
+    if (candidate > earliest) {
+      earliest = candidate;
       reason = micro > 0 ? "micro-pause" : "jitter";
     }
-    if (config.jitter.sendOutsideWorkingHours === "defer") {
-      const openInstant = nextOpenWorkingInstant(new Date(earliest), policy);
-      if (openInstant.getTime() > earliest) {
-        earliest = openInstant.getTime();
-        reason = "working-hours";
-      }
+  }
+  if (config.jitter.sendOutsideWorkingHours === "defer") {
+    const openInstant = nextOpenWorkingInstant(new Date(earliest), policy);
+    if (openInstant.getTime() > earliest) {
+      earliest = openInstant.getTime();
+      reason = "working-hours";
     }
   }
 
-  const result = new Date(earliest) as AugmentedDate;
-  result.reason = reason;
-  return result;
+  const reservation = {
+    sendAfter: new Date(earliest).toISOString(),
+    reason: reason ?? "pacing",
+    reservedAt: now.toISOString(),
+    afterLastSend: fingerprint,
+  };
+  return { sendAfter: new Date(earliest), reason, persist: true, reservation };
 }
 

@@ -6,6 +6,11 @@ export type StoreOptions = {
   rootDir: string;
 };
 
+/**
+ * Read the `usage.json` ledger for `mailbox` from `opts.rootDir`. If the
+ * file does not exist, returns a freshly-initialized ledger (timezone
+ * resolved from per-mailbox override or default). Other I/O errors propagate.
+ */
 export async function loadLedger(
   opts: StoreOptions,
   mailbox: string,
@@ -23,6 +28,11 @@ export async function loadLedger(
   }
 }
 
+/**
+ * Persist `ledger` to disk under `opts.rootDir`, creating parent directories
+ * as needed. Uses a temp-file + `rename` to make the swap atomic so a crash
+ * mid-write cannot leave a partially-written `usage.json`.
+ */
 export async function saveLedger(opts: StoreOptions, ledger: MailboxLedger): Promise<void> {
   const file = ledgerFilePath(opts.rootDir, ledger.mailbox);
   await fs.mkdir(path.dirname(file), { recursive: true });
@@ -31,6 +41,14 @@ export async function saveLedger(opts: StoreOptions, ledger: MailboxLedger): Pro
   await fs.rename(tmp, file);
 }
 
+/**
+ * Mutate `ledger` in place: prepend `event` to the ring buffer (trimmed to
+ * `config.retention.maxEvents`), update daily aggregates and per-recipient
+ * domain counts, advance `lastCallAt[event.cat]` and `updatedAt`, and run
+ * compaction (rolling daily buckets older than the retention window into
+ * monthly aggregates and dropping expired domain buckets). Does not persist
+ * — the caller is expected to follow with `saveLedger`.
+ */
 export function appendEvent(ledger: MailboxLedger, event: LedgerEvent, config: PluginConfig): void {
   ledger.events.unshift(event);
   if (ledger.events.length > config.retention.maxEvents) {

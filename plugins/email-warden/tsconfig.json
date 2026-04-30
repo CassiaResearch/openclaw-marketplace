@@ -6,8 +6,8 @@
     "rootDir": ".",
     "outDir": "dist",
     "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
+    "declarationMap": false,
+    "sourceMap": false,
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -17,5 +17,5 @@
     "noUncheckedIndexedAccess": true
   },
   "include": ["./index.ts", "./src/**/*.ts"],
-  "exclude": ["dist", "node_modules", "**/*.test.ts"]
+  "exclude": ["dist", "node_modules", "tests"]
 }

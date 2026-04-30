@@ -6,7 +6,7 @@ import type { PluginConfig } from "./src/types.js";
 const DEFAULT_STATE_DIR = "email-warden";
 
 export default definePluginEntry({
-  id: "email-warden",
+  id: "copilotai-email-warden",
   name: "Email Warden",
   description:
     "Outbound email governance with per-mailbox rate limits, lognormal jitter, working-hours gates, traffic-class policy, and bounce/reply/complaint tripwires.",

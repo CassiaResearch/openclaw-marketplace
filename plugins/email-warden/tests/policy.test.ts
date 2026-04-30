@@ -2,9 +2,9 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { checkSend, recordExternalEvent, recordSend } from "./policy.js";
-import { loadLedger, type StoreOptions } from "./store.js";
-import type { PluginConfig } from "./types.js";
+import { checkSend, recordExternalEvent, recordSend } from "../src/policy.js";
+import { loadLedger, type StoreOptions } from "../src/store.js";
+import type { PluginConfig } from "../src/types.js";
 
 function baseConfig(overrides: Partial<PluginConfig> = {}): PluginConfig {
   return {
@@ -208,6 +208,111 @@ describe("checkSend", () => {
       saturday,
     );
     expect(coldDecision.decision).toBe("defer");
+  });
+
+  it("reuses the same sendAfter across consecutive checks (no resampling)", async () => {
+    const cfg = baseConfig({
+      jitter: {
+        enabled: true,
+        distribution: "lognormal",
+        lognormal: { medianSeconds: 140, sigma: 0.6 },
+        clampSeconds: { min: 45, max: 900 },
+        microPause: { probability: 0, durationSeconds: { min: 0, max: 1 } },
+        sendOutsideWorkingHours: "allow",
+      },
+    });
+    await recordSend(
+      { mailbox: "emma@example.com", recipient: "first@acme.com", class: "cold_outbound", result: "ok" },
+      cfg,
+      store,
+    );
+
+    const first = await checkSend(
+      { mailbox: "emma@example.com", recipient: "second@acme.com", trafficClass: "cold_outbound" },
+      cfg,
+      store,
+    );
+    const second = await checkSend(
+      { mailbox: "emma@example.com", recipient: "second@acme.com", trafficClass: "cold_outbound" },
+      cfg,
+      store,
+    );
+    const third = await checkSend(
+      { mailbox: "emma@example.com", recipient: "different@acme.com", trafficClass: "cold_outbound" },
+      cfg,
+      store,
+    );
+    expect(first.decision).toBe("defer");
+    expect(second.decision).toBe("defer");
+    expect(third.decision).toBe("defer");
+    if (first.decision === "defer" && second.decision === "defer" && third.decision === "defer") {
+      expect(second.sendAfter).toBe(first.sendAfter);
+      // Reservation is mailbox-scoped: a different recipient inherits the same pacing.
+      expect(third.sendAfter).toBe(first.sendAfter);
+    }
+
+    const ledger = await loadLedger(store, "emma@example.com", cfg);
+    expect(ledger.pendingSendReservation?.sendAfter).toBe(
+      first.decision === "defer" ? first.sendAfter : undefined,
+    );
+  });
+
+  it("clears the reservation on recordSend and resamples afterwards", async () => {
+    const cfg = baseConfig({
+      mailboxes: {
+        default: {
+          timezone: "UTC",
+          workingHours: { start: "00:00", end: "23:59" },
+          workingDays: ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+          limits: {
+            send: { perDay: 100, perHour: 100, minGapSeconds: 0 },
+            perRecipientDomainPerHour: 100,
+          },
+          warmup: { enabled: false, startPerDay: 15, rampPerDay: 3, plateauPerDay: 40 },
+        },
+      },
+      jitter: {
+        enabled: true,
+        distribution: "uniform",
+        uniform: { minSeconds: 60, maxSeconds: 60 },
+        clampSeconds: { min: 60, max: 60 },
+        microPause: { probability: 0, durationSeconds: { min: 0, max: 1 } },
+        sendOutsideWorkingHours: "allow",
+      },
+    });
+    await recordSend(
+      { mailbox: "emma@example.com", recipient: "first@acme.com", class: "cold_outbound", result: "ok" },
+      cfg,
+      store,
+    );
+    const before = await checkSend(
+      { mailbox: "emma@example.com", recipient: "second@acme.com", trafficClass: "cold_outbound" },
+      cfg,
+      store,
+    );
+    expect(before.decision).toBe("defer");
+
+    const ledgerBefore = await loadLedger(store, "emma@example.com", cfg);
+    expect(ledgerBefore.pendingSendReservation).toBeDefined();
+    const fingerprintBefore = ledgerBefore.pendingSendReservation?.afterLastSend;
+
+    await recordSend(
+      { mailbox: "emma@example.com", recipient: "second@acme.com", class: "cold_outbound", result: "ok" },
+      cfg,
+      store,
+    );
+
+    const ledgerAfter = await loadLedger(store, "emma@example.com", cfg);
+    expect(ledgerAfter.pendingSendReservation).toBeUndefined();
+
+    const next = await checkSend(
+      { mailbox: "emma@example.com", recipient: "third@acme.com", trafficClass: "cold_outbound" },
+      cfg,
+      store,
+    );
+    expect(next.decision).toBe("defer");
+    const ledgerNext = await loadLedger(store, "emma@example.com", cfg);
+    expect(ledgerNext.pendingSendReservation?.afterLastSend).not.toBe(fingerprintBefore);
   });
 });
 

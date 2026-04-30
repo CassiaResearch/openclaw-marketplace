@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { evaluateTripwires } from "./tripwires.js";
-import type { LedgerEvent, MailboxLedger, PluginConfig, TrafficClass } from "./types.js";
+import { evaluateTripwires } from "../src/tripwires.js";
+import type { LedgerEvent, MailboxLedger, PluginConfig, TrafficClass } from "../src/types.js";
 
 function emptyLedger(): MailboxLedger {
   return {
