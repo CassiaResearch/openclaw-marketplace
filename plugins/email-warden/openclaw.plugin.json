@@ -1,0 +1,261 @@
+{
+  "id": "email-warden",
+  "name": "Email Warden",
+  "description": "Outbound email governance: rate limits, lognormal jitter, working-hours gates, traffic-class policy, bounce/reply/complaint tripwires, and a per-mailbox usage ledger.",
+  "skills": ["./skills"],
+  "activation": {
+    "onStartup": false
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": { "type": "boolean" },
+      "stateDir": { "type": "string", "minLength": 1 },
+      "mailboxes": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "default": { "$ref": "#/$defs/mailboxPolicy" },
+          "overrides": {
+            "type": "object",
+            "propertyNames": { "type": "string", "pattern": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$" },
+            "additionalProperties": { "$ref": "#/$defs/mailboxPolicy" }
+          }
+        }
+      },
+      "jitter": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "distribution": { "enum": ["uniform", "lognormal"] },
+          "uniform": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "minSeconds": { "type": "integer", "minimum": 0 },
+              "maxSeconds": { "type": "integer", "minimum": 1 }
+            }
+          },
+          "lognormal": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "medianSeconds": { "type": "number", "exclusiveMinimum": 0 },
+              "sigma": { "type": "number", "exclusiveMinimum": 0 }
+            }
+          },
+          "clampSeconds": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "min": { "type": "integer", "minimum": 0 },
+              "max": { "type": "integer", "minimum": 1 }
+            }
+          },
+          "microPause": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "probability": { "type": "number", "minimum": 0, "maximum": 1 },
+              "durationSeconds": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "min": { "type": "integer", "minimum": 0 },
+                  "max": { "type": "integer", "minimum": 1 }
+                }
+              }
+            }
+          },
+          "sendOutsideWorkingHours": { "enum": ["defer", "allow", "deny"] }
+        }
+      },
+      "tripwires": {
+        "type": "object",
+        "additionalProperties": { "$ref": "#/$defs/tripwire" }
+      },
+      "suppression": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "scope": { "enum": ["global", "per-mailbox"] },
+          "honorUnsubscribeWithinHours": { "type": "integer", "minimum": 1, "maximum": 48 }
+        }
+      },
+      "retention": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "maxEvents": { "type": "integer", "minimum": 100 },
+          "dailyRetentionDays": { "type": "integer", "minimum": 7 },
+          "perDomainRetentionDays": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "alerts": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "slackChannel": { "type": "string" },
+          "onPause": { "type": "boolean" },
+          "onDailyRollup": { "type": "boolean" }
+        }
+      },
+      "ingestion": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "adapters": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/ingestionAdapter" },
+            "description": "Ordered list of inbound-event adapters. Each adapter calls email_warden_record_event when it observes a bounce, reply, complaint, or unsubscribe. Adapters are independent; configuring multiple is safe and lets you run a fast adapter alongside a slower fallback."
+          }
+        }
+      }
+    },
+    "$defs": {
+      "mailboxPolicy": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "timezone": { "type": "string" },
+          "workingHours": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "start": { "type": "string", "pattern": "^\\d{2}:\\d{2}$" },
+              "end": { "type": "string", "pattern": "^\\d{2}:\\d{2}$" }
+            }
+          },
+          "workingDays": {
+            "type": "array",
+            "items": { "enum": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] }
+          },
+          "limits": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "send": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "perDay": { "type": "integer", "minimum": 1, "maximum": 700 },
+                  "perHour": { "type": "integer", "minimum": 1 },
+                  "minGapSeconds": { "type": "integer", "minimum": 0 }
+                }
+              },
+              "perRecipientDomainPerHour": { "type": "integer", "minimum": 1 }
+            }
+          },
+          "warmup": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": { "type": "boolean" },
+              "startPerDay": { "type": "integer", "minimum": 1 },
+              "rampPerDay": { "type": "integer", "minimum": 0 },
+              "plateauPerDay": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      },
+      "tripwire": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "classes": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "window": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["sends"],
+                "properties": { "sends": { "type": "integer", "minimum": 10 } }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["hours"],
+                "properties": {
+                  "hours": { "type": "integer", "minimum": 1 },
+                  "minSends": { "type": "integer", "minimum": 1 }
+                }
+              }
+            ]
+          },
+          "maxRate": { "type": "number", "minimum": 0, "maximum": 1 },
+          "minRate": { "type": "number", "minimum": 0, "maximum": 1 },
+          "action": { "enum": ["alert", "pause-mailbox", "pause-warmup", "pause-campaign", "suppress-recipient"] }
+        }
+      },
+      "ingestionAdapter": {
+        "oneOf": [
+          { "$ref": "#/$defs/gmailPubsubAdapter" },
+          { "$ref": "#/$defs/gmailPollAdapter" }
+        ]
+      },
+      "gmailPubsubAdapter": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind"],
+        "properties": {
+          "kind": { "const": "gmail-pubsub" },
+          "enabled": { "type": "boolean" },
+          "mode": {
+            "enum": ["push", "pull"],
+            "description": "push: openclaw exposes a webhook endpoint that GCP Pub/Sub posts to. pull: openclaw long-polls the subscription itself (no public endpoint required)."
+          },
+          "topic": { "type": "string", "description": "Fully-qualified Pub/Sub topic, e.g. projects/<project>/topics/<topic>." },
+          "subscription": { "type": "string", "description": "Pull subscription name when mode=pull." },
+          "pushPath": { "type": "string", "description": "Webhook path the openclaw HTTP server registers when mode=push, e.g. /email-warden/gmail-pubsub." },
+          "secretEnv": { "type": "string", "description": "Env var holding the shared secret for verifying push requests (HMAC or bearer token, per Pub/Sub config)." },
+          "mailboxes": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$" },
+            "description": "Mailboxes covered by this subscription. Used to scope events to the correct mailbox ledger."
+          },
+          "labelsToCapture": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Gmail labels treated as ingestion sources. Defaults to INBOX (replies) and any label Gmail uses for DSNs."
+          }
+        }
+      },
+      "gmailPollAdapter": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind"],
+        "properties": {
+          "kind": { "const": "gmail-poll" },
+          "enabled": { "type": "boolean" },
+          "mailboxes": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$" }
+          },
+          "pollSeconds": {
+            "type": "integer",
+            "minimum": 30,
+            "maximum": 3600,
+            "description": "Polling interval per mailbox. Lower values catch events faster but burn more Gmail API quota; 60-180 is a reasonable range for cold-outreach use."
+          },
+          "labelsToCapture": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "historyIdStateKey": {
+            "type": "string",
+            "description": "Override the state-file key that stores the per-mailbox Gmail historyId. Defaults to gmail-historyId."
+          }
+        }
+      }
+    }
+  },
+  "uiHints": {
+    "enabled": { "label": "Enable Email Warden" },
+    "stateDir": { "label": "State Directory", "help": "Subdirectory under plugins/ where per-mailbox ledgers are persisted." }
+  }
+}
