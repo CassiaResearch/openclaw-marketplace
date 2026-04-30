@@ -27,6 +27,11 @@
       "name": "openclaw-instantly",
       "description": "Receives Instantly.ai webhooks, authenticates via a custom header, and creates a TaskFlow per event for downstream agent handling",
       "source": "./plugins/instantly"
+    },
+    {
+      "name": "copilotai-email-warden",
+      "description": "Email Warden for OpenClaw, a plugin that monitors email activity and adds a layer of protection for sending cold emails so that your account doesn't get banned or blacklisted.",
+      "source": "./plugins/email-warden"
     }
   ]
 }
