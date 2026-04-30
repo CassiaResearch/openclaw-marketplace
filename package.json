@@ -1,0 +1,35 @@
+{
+  "name": "@copilotai/openclaw-email-warden",
+  "version": "0.1.1",
+  "private": true,
+  "description": "OpenClaw plugin that keeps track of your inbox, and adds a layer of protection for sending cold emails so that your account doesn't get banned or blacklisted.",
+  "type": "module",
+  "main": "dist/index.js",
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "skills"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "0.34.49"
+  },
+  "peerDependencies": {
+    "openclaw": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.1.0"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  }
+}
