@@ -6,7 +6,7 @@ metadata:
     "openclaw":
       {
         "emoji": "📬",
-        "requires": { "config": ["plugins.entries.email-warden.enabled"] },
+        "requires": { "config": ["plugins.entries.copilotai-email-warden.enabled"] },
       },
   }
 ---

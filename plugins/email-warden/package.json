@@ -1,6 +1,6 @@
 {
   "name": "copilotai-email-warden",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "OpenClaw plugin that keeps track of your inbox, and adds a layer of protection for sending cold emails so that your account doesn't get banned or blacklisted.",
   "type": "module",
