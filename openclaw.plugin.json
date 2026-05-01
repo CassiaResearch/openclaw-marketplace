@@ -2,7 +2,8 @@
   "id": "copilotai-email-warden",
   "name": "Email Warden by CoPilot AI",
   "description": "Outbound email governance: rate limits, lognormal jitter, working-hours gates, traffic-class policy, bounce/reply/complaint tripwires, and a per-mailbox usage ledger.",
-  "version": "0.1.1",
+  "version": "0.1.2",
+  "pluginApi": "1.0",
   "skills": ["./skills"],
   "activation": {
     "onStartup": false
