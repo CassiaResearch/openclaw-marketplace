@@ -31,35 +31,32 @@ const debug = process.env.COMPOSIO_PLUS_DEBUG
 export const replyTool = experimental_createTool("REPLY_TO_EMAIL", {
   name: "Reply to email (Instantly)",
   description: [
-    "Send an approved reply on an Instantly email thread, pinned to the exact",
-    "sender mailbox (eaccount) that sent the original outbound. Wraps Instantly's",
-    "POST /emails/reply via Composio's managed Instantly connection.",
+    "Send an approved reply on an Instantly email thread, using the exact",
+    "sender mailbox (eaccount) that sent the original outbound. Use only",
+    "after the operator approves the draft; never invent or edit content.",
     "",
-    "Use ONLY after a draft has been approved by the operator (e.g. in",
-    "#emma-email-review, Slack channel C0AUKA00316). Do NOT use this tool for",
-    "Gmail or other channels. Do NOT invent or modify reply content; send only",
-    "the exact draft that was approved.",
+    "Pick this tool when the user asks to send / fire / respond with an",
+    "approved Instantly draft. Do not use for Gmail or other channels.",
     "",
-    "Triggers: \"send the approved reply via instantly\", \"reply from",
-    "[eaccount] to this instantly thread\", \"respond through instantly to",
-    "[prospect]\", \"fire the instantly reply draft\", \"send my instantly",
-    "draft\".",
-    "",
-    "On success returns { ok: true, body } where body is Instantly's raw",
-    "response. On a non-2xx returns { ok: false, httpStatus, error }. Surface",
-    "4xx/5xx to the operator rather than retrying silently.",
+    "Returns { ok: true, body } on 2xx (body is Instantly's raw response),",
+    "{ ok: false, httpStatus, error } on non-2xx. Surface 4xx/5xx to the",
+    "operator instead of retrying silently.",
   ].join(" "),
   extendsToolkit: "instantly",
   inputParams: z.object({
     eaccount: z.string().describe(
-      "Burner sender mailbox. Must match the email_account from the inbound webhook payload, OR the operator's explicit override.",
+      "Sender mailbox slug — `email_account` on Instantly email records. " +
+        "Must match the original outbound mailbox unless the operator " +
+        "explicitly overrides.",
     ),
     reply_to_uuid: z.string().describe(
-      "The id field from the inbound INSTANTLY_LIST_EMAILS entry being replied to. Email UUID, not a thread ID.",
+      "Email UUID — the `id` field on an Instantly email record (from a " +
+        "webhook payload, COMPOSIO_SEARCH_TOOLS results, or any Instantly " +
+        "list/get action). NOT a thread ID.",
     ),
-    subject: z.string().describe("Reply subject. Usually 'Re: <original subject>'."),
-    body_html: z.string().describe("The approved reply rendered as HTML."),
-    body_text: z.string().describe("The approved reply as plaintext."),
+    subject: z.string().describe("Reply subject, e.g. 'Re: <original subject>'."),
+    body_html: z.string().describe("Approved reply as HTML. Required alongside body_text."),
+    body_text: z.string().describe("Approved reply as plaintext. Required alongside body_html."),
   }),
   // Use `function` (not arrow) so we can preserve `this` when calling
   // ctx.proxyExecute via `.call(ctx, ...)`. The SDK's proxyExecute relies on
