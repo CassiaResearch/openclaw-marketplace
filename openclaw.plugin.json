@@ -1,0 +1,87 @@
+{
+  "id": "composio-plus",
+  "name": "Composio Plus",
+  "version": "0.0.1",
+  "description": "Per-user Composio access via the TypeScript SDK. Exposes the six Composio meta-tools (search, schemas, multi-execute, manage-connections, workbench, bash). Supports custom tools, custom toolkits, and custom auth configs.",
+  "configContracts": {
+    "secretInputs": {
+      "bundledDefaultEnabled": false,
+      "paths": [
+        { "path": "apiKey", "expected": "string" }
+      ]
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "description": "Enable or disable the Composio Plus integration"
+      },
+      "apiKey": {
+        "description": "Composio ak_... project API key (https://app.composio.dev/developers). Accepts a plain string or a secret-ref object resolved by openclaw's credential provider chain.",
+        "oneOf": [
+          { "type": "string" },
+          {
+            "type": "object",
+            "properties": {
+              "source": { "type": "string" },
+              "provider": { "type": "string" },
+              "id": { "type": "string" }
+            },
+            "required": ["source", "provider", "id"]
+          }
+        ]
+      },
+      "userId": {
+        "type": "string",
+        "description": "Per-user Composio identity. One openclaw process per Composio user."
+      },
+      "baseURL": {
+        "type": "string",
+        "description": "Composio backend URL (default: https://backend.composio.dev)"
+      },
+      "toolkits": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Composio catalog toolkits the session should include (e.g. github, gmail)."
+      },
+      "authConfigs": {
+        "type": "object",
+        "description": "Map of toolkit slug → ac_... auth config id. These are pinned at session creation so COMPOSIO_MANAGE_CONNECTIONS uses your custom OAuth app instead of Composio's managed default.",
+        "additionalProperties": { "type": "string" }
+      }
+    }
+  },
+  "uiHints": {
+    "enabled": {
+      "label": "Enable Composio Plus",
+      "help": "Enable or disable this plugin"
+    },
+    "apiKey": {
+      "label": "API Key",
+      "help": "Composio ak_... project key from app.composio.dev/developers",
+      "sensitive": true
+    },
+    "userId": {
+      "label": "User ID",
+      "help": "Per-user identity (one openclaw process per Composio user)"
+    },
+    "baseURL": {
+      "label": "Base URL",
+      "help": "Composio backend URL (default backend.composio.dev)",
+      "advanced": true
+    },
+    "toolkits": {
+      "label": "Toolkits",
+      "help": "Composio catalog toolkits the session exposes through meta-tools"
+    },
+    "authConfigs": {
+      "label": "Auth Configs",
+      "help": "Custom OAuth apps / API-key auth configs",
+      "sensitive": true,
+      "advanced": true
+    }
+  }
+}
