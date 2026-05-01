@@ -32,6 +32,11 @@
       "name": "copilotai-email-warden",
       "description": "Email Warden for OpenClaw, a plugin that monitors email activity and adds a layer of protection for sending cold emails so that your account doesn't get banned or blacklisted.",
       "source": "./plugins/email-warden"
+    },
+    {
+      "name": "composio-plus",
+      "description": "Per-user Composio access for OpenClaw via the TypeScript SDK. Exposes the six Composio meta-tools (search, schemas, multi-execute, manage-connections, workbench, bash) and supports custom tools, custom toolkits, and custom auth configs.",
+      "source": "./plugins/composio-plus"
     }
   ]
 }
