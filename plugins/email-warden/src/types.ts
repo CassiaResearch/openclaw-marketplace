@@ -106,6 +106,7 @@ export type IngestionAdapter = {
 
 export type PluginConfig = {
   enabled: boolean;
+  debug: boolean;
   stateDir: string;
   mailboxes: {
     default: MailboxPolicy;

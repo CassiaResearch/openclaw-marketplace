@@ -1,5 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { jsonResult } from "openclaw/plugin-sdk/provider-web-search";
+import type { Log } from "./log.js";
+import { noopLog } from "./log.js";
 import { checkSend, recordExternalEvent, recordSend } from "./policy.js";
 import type { StoreOptions } from "./store.js";
 import { KNOWN_TRAFFIC_CLASSES, type PluginConfig } from "./types.js";
@@ -12,7 +14,7 @@ const TrafficClassEnum = Type.Union(KNOWN_TRAFFIC_CLASSES.map((c) => Type.Litera
  * returns the raw `Decision` (`allow` | `defer` | `deny` | `suppressed`)
  * as JSON. `config` and `store` are captured at registration time.
  */
-export function createCheckSendTool(config: PluginConfig, store: StoreOptions) {
+export function createCheckSendTool(config: PluginConfig, store: StoreOptions, log: Log = noopLog()) {
   return {
     name: "email_warden_check_send",
     label: "Email Warden — Check Send",
@@ -31,17 +33,31 @@ export function createCheckSendTool(config: PluginConfig, store: StoreOptions) {
       { additionalProperties: false },
     ),
     execute: async (_id: string, raw: Record<string, unknown>) => {
+      const mailbox = String(raw.mailbox);
+      const recipient = String(raw.recipient);
+      log.debug(
+        `check_send mailbox=${mailbox} recipient=${recipient} class=${String(raw.trafficClass ?? "(unset)")} campaign=${raw.campaignContext === true}`,
+      );
       const decision = await checkSend(
         {
-          mailbox: String(raw.mailbox),
-          recipient: String(raw.recipient),
+          mailbox,
+          recipient,
           trafficClass: typeof raw.trafficClass === "string" ? raw.trafficClass : undefined,
           cost: typeof raw.cost === "number" ? raw.cost : undefined,
           campaignContext: raw.campaignContext === true,
         },
         config,
         store,
+        new Date(),
+        log,
       );
+      const tail =
+        decision.decision === "defer"
+          ? ` sendAfter=${decision.sendAfter} reason=${decision.reason}`
+          : decision.decision === "deny" || decision.decision === "suppressed"
+            ? ` reason=${decision.reason}`
+            : "";
+      log.info(`check_send mailbox=${mailbox} → ${decision.decision}${tail}`);
       return jsonResult(decision);
     },
   };
@@ -53,7 +69,7 @@ export function createCheckSendTool(config: PluginConfig, store: StoreOptions) {
  * resolves (success or error), with the `class` returned by the prior
  * `check_send` decision so aggregates and tripwires stay consistent.
  */
-export function createRecordSendTool(config: PluginConfig, store: StoreOptions) {
+export function createRecordSendTool(config: PluginConfig, store: StoreOptions, log: Log = noopLog()) {
   return {
     name: "email_warden_record_send",
     label: "Email Warden — Record Send",
@@ -76,20 +92,30 @@ export function createRecordSendTool(config: PluginConfig, store: StoreOptions) 
       { additionalProperties: false },
     ),
     execute: async (_id: string, raw: Record<string, unknown>) => {
+      const mailbox = String(raw.mailbox);
+      const recipient = String(raw.recipient);
+      const result = raw.result as "ok" | "error";
       await recordSend(
         {
-          mailbox: String(raw.mailbox),
-          recipient: String(raw.recipient),
+          mailbox,
+          recipient,
           class: raw.class as never,
           cost: typeof raw.cost === "number" ? raw.cost : undefined,
-          result: raw.result as never,
+          result,
           messageId: typeof raw.messageId === "string" ? raw.messageId : undefined,
           errorStatus: typeof raw.errorStatus === "number" ? raw.errorStatus : undefined,
           reason: typeof raw.reason === "string" ? raw.reason : undefined,
         },
         config,
         store,
+        new Date(),
+        log,
       );
+      const errTail =
+        result === "error"
+          ? ` errorStatus=${raw.errorStatus ?? "?"}${raw.reason ? ` reason=${String(raw.reason)}` : ""}`
+          : "";
+      log.info(`record_send mailbox=${mailbox} class=${String(raw.class)} result=${result}${errTail}`);
       return jsonResult({ ok: true });
     },
   };
@@ -101,7 +127,7 @@ export function createRecordSendTool(config: PluginConfig, store: StoreOptions) 
  * unsubscribe). Typically driven by the Gmail Pub/Sub ingestion adapter,
  * not by the agent directly.
  */
-export function createRecordEventTool(config: PluginConfig, store: StoreOptions) {
+export function createRecordEventTool(config: PluginConfig, store: StoreOptions, log: Log = noopLog()) {
   return {
     name: "email_warden_record_event",
     label: "Email Warden — Record External Event",
@@ -123,16 +149,24 @@ export function createRecordEventTool(config: PluginConfig, store: StoreOptions)
       { additionalProperties: false },
     ),
     execute: async (_id: string, raw: Record<string, unknown>) => {
+      const mailbox = String(raw.mailbox);
+      const recipient = String(raw.recipient);
+      const cat = raw.cat as "bounce" | "reply" | "complaint" | "unsubscribe";
       await recordExternalEvent(
         {
-          mailbox: String(raw.mailbox),
-          cat: raw.cat as never,
+          mailbox,
+          cat: cat as never,
           class: raw.class as never,
-          recipient: String(raw.recipient),
+          recipient,
           reason: typeof raw.reason === "string" ? raw.reason : undefined,
         },
         config,
         store,
+        new Date(),
+        log,
+      );
+      log.info(
+        `record_event mailbox=${mailbox} cat=${cat} class=${String(raw.class)}${raw.reason ? ` reason=${String(raw.reason)}` : ""}`,
       );
       return jsonResult({ ok: true });
     },
