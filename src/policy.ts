@@ -1,4 +1,5 @@
 import { maybeMicroPauseSeconds, nextOpenWorkingInstant, sampleJitterSeconds } from "./jitter.js";
+import { noopLog, type Log } from "./log.js";
 import { appendEvent, loadLedger, saveLedger, type StoreOptions } from "./store.js";
 import { evaluateTripwires } from "./tripwires.js";
 import {
@@ -38,27 +39,36 @@ export async function checkSend(
   config: PluginConfig,
   store: StoreOptions,
   now: Date = new Date(),
+  log: Log = noopLog(),
 ): Promise<Decision> {
   const resolvedClass = resolveTrafficClass(input);
   const ledger = await loadLedger(store, input.mailbox, config);
   const policy = resolveMailboxPolicy(input.mailbox, config);
 
   if (ledger.suppressed.some((s) => s.recipient.toLowerCase() === input.recipient.toLowerCase())) {
+    log.debug(`checkSend mailbox=${input.mailbox} recipient=${input.recipient} → suppressed`);
     return { decision: "suppressed", reason: "recipient in suppression list" };
   }
 
   if (ledger.pausedUntil && Date.parse(ledger.pausedUntil) > now.getTime()) {
+    log.warn(
+      `checkSend mailbox=${input.mailbox} → deny (paused until ${ledger.pausedUntil}: ${ledger.pausedReason ?? "mailbox paused"})`,
+    );
     return { decision: "deny", reason: ledger.pausedReason ?? "mailbox paused" };
   }
 
   const tripHits = evaluateTripwires(ledger, config, now);
   const hardPause = tripHits.find((h) => h.action === "pause-mailbox");
   if (hardPause) {
+    log.warn(`checkSend mailbox=${input.mailbox} → deny (tripwire pause-mailbox: ${hardPause.message})`);
     return { decision: "deny", reason: hardPause.message };
   }
 
   const limitDeny = checkGlobalLimits(ledger, policy, now);
-  if (limitDeny) return limitDeny;
+  if (limitDeny) {
+    log.info(`checkSend mailbox=${input.mailbox} → deny (${limitDeny.reason})`);
+    return limitDeny;
+  }
 
   const paced = computeSendAfter(resolvedClass, policy, config, ledger, now);
   if (paced.persist) {
@@ -66,6 +76,9 @@ export async function checkSend(
     await saveLedger(store, ledger);
   }
   if (paced.sendAfter.getTime() > now.getTime() + 1000) {
+    log.debug(
+      `checkSend mailbox=${input.mailbox} class=${resolvedClass} → defer sendAfter=${paced.sendAfter.toISOString()} reason=${paced.reason ?? "pacing"}`,
+    );
     return {
       decision: "defer",
       class: resolvedClass,
@@ -74,6 +87,7 @@ export async function checkSend(
     };
   }
 
+  log.debug(`checkSend mailbox=${input.mailbox} class=${resolvedClass} → allow`);
   return { decision: "allow", class: resolvedClass };
 }
 
@@ -88,6 +102,7 @@ export async function recordSend(
   config: PluginConfig,
   store: StoreOptions,
   now: Date = new Date(),
+  log: Log = noopLog(),
 ): Promise<void> {
   const ledger = await loadLedger(store, input.mailbox, config);
   appendEvent(
@@ -107,6 +122,9 @@ export async function recordSend(
   );
   delete ledger.pendingSendReservation;
   await saveLedger(store, ledger);
+  log.debug(
+    `recordSend mailbox=${input.mailbox} class=${input.class} result=${input.result}${input.messageId ? ` messageId=${input.messageId}` : ""}`,
+  );
 }
 
 /**
@@ -121,6 +139,7 @@ export async function recordExternalEvent(
   config: PluginConfig,
   store: StoreOptions,
   now: Date = new Date(),
+  log: Log = noopLog(),
 ): Promise<void> {
   const ledger = await loadLedger(store, input.mailbox, config);
 
@@ -132,6 +151,9 @@ export async function recordExternalEvent(
         reason: input.reason ?? input.cat,
         at: now.toISOString(),
       });
+      log.info(
+        `suppressed recipient=${input.recipient} mailbox=${input.mailbox} cause=${input.cat}${input.reason ? ` reason=${input.reason}` : ""}`,
+      );
     }
   }
 
@@ -149,6 +171,9 @@ export async function recordExternalEvent(
     config,
   );
   await saveLedger(store, ledger);
+  log.debug(
+    `recordExternalEvent mailbox=${input.mailbox} cat=${input.cat} class=${input.class} recipient=${input.recipient}`,
+  );
 }
 
 function resolveTrafficClass(input: CheckSendInput): TrafficClass {
@@ -181,7 +206,7 @@ function checkGlobalLimits(
   ledger: MailboxLedger,
   policy: MailboxPolicy,
   now: Date,
-): Decision | null {
+): Extract<Decision, { decision: "deny" }> | null {
   const today = now.toISOString().slice(0, 10);
   const todayBucket = ledger.aggregates.daily[today];
   const sentToday = todayBucket?.send.calls ?? 0;

@@ -1,5 +1,6 @@
 import path from "node:path";
 import { definePluginEntry, type AnyAgentTool } from "openclaw/plugin-sdk/plugin-entry";
+import { attachLog } from "./src/log.js";
 import { createCheckSendTool, createRecordEventTool, createRecordSendTool } from "./src/tools.js";
 import type { PluginConfig } from "./src/types.js";
 
@@ -12,24 +13,32 @@ export default definePluginEntry({
     "Outbound email governance with per-mailbox rate limits, lognormal jitter, working-hours gates, traffic-class policy, and bounce/reply/complaint tripwires.",
   register(api) {
     const config = normalizeConfig(api.pluginConfig);
+    const log = attachLog(api.logger, config.debug);
+
     if (!config.enabled) {
-      api.logger.warn?.("email-warden: plugin disabled via config; tools will not be registered");
+      log.warn("plugin disabled via config; tools will not be registered");
       return;
     }
 
     const rootDir = resolveStateRoot(api, config.stateDir);
     const store = { rootDir };
+    log.debug(`state root resolved to ${rootDir}`);
 
-    api.registerTool(createCheckSendTool(config, store) as AnyAgentTool);
-    api.registerTool(createRecordSendTool(config, store) as AnyAgentTool);
-    api.registerTool(createRecordEventTool(config, store) as AnyAgentTool);
+    api.registerTool(createCheckSendTool(config, store, log) as AnyAgentTool);
+    api.registerTool(createRecordSendTool(config, store, log) as AnyAgentTool);
+    api.registerTool(createRecordEventTool(config, store, log) as AnyAgentTool);
 
     for (const adapter of config.ingestion.adapters) {
       if (adapter.enabled === false) continue;
-      api.logger.info?.(
-        `email-warden: ingestion adapter "${adapter.kind}" is configured but not yet implemented; events from this source will not flow until the adapter ships`,
+      log.info(
+        `ingestion adapter "${adapter.kind}" is configured but not yet implemented; events from this source will not flow until the adapter ships`,
       );
     }
+
+    const mailboxCount = 1 + Object.keys(config.mailboxes.overrides ?? {}).length;
+    log.info(
+      `ready — 3 tools registered (mailboxes: ${mailboxCount}, suppression: ${config.suppression.scope}, jitter: ${config.jitter.enabled ? config.jitter.distribution : "off"})`,
+    );
   },
 });
 
@@ -37,6 +46,7 @@ function normalizeConfig(raw: unknown): PluginConfig {
   const cfg = (raw ?? {}) as Partial<PluginConfig>;
   return {
     enabled: cfg.enabled !== false,
+    debug: cfg.debug === true,
     stateDir: cfg.stateDir ?? DEFAULT_STATE_DIR,
     mailboxes: cfg.mailboxes ?? {
       default: {

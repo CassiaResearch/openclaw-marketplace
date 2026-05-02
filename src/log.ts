@@ -1,0 +1,42 @@
+import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
+
+const TAG = "[email-warden]";
+
+export interface Log {
+  info(msg: string): void;
+  warn(msg: string): void;
+  error(msg: string): void;
+  /** No-op unless the plugin's `debug` config is true. */
+  debug(msg: string): void;
+}
+
+/**
+ * Wraps the host's logger so every line gets an `[email-warden]` tag and
+ * `debug()` is silenced unless the plugin has debug mode enabled.
+ */
+export function attachLog(host: PluginLogger, verbose: boolean): Log {
+  // If the host has no debug sink, silently drop debug lines. Falling back to
+  // host.info would leak verbose lines into info-level logs.
+  const debugSink = host.debug?.bind(host);
+  const tag = (msg: string): string => `${TAG} ${msg}`;
+  return {
+    info: (msg) => host.info(tag(msg)),
+    warn: (msg) => host.warn(tag(msg)),
+    error: (msg) => host.error(tag(msg)),
+    debug: (msg) => {
+      if (verbose && debugSink) debugSink(tag(msg));
+    },
+  };
+}
+
+const NOOP: Log = {
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+  debug: () => {},
+};
+
+/** No-op logger for tests and call sites that haven't been wired up yet. */
+export function noopLog(): Log {
+  return NOOP;
+}
