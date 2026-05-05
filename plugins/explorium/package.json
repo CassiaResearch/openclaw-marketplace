@@ -1,6 +1,6 @@
 {
   "name": "openclaw-explorium-plugin",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "OpenClaw Explorium plugin — B2B business and prospect data via Explorium's hosted MCP server",
   "keywords": [
@@ -27,7 +27,11 @@
     ],
     "runtimeExtensions": [
       "./dist/index.js"
-    ]
+    ],
+    "compat": {
+      "pluginApi": ">=2026.4.0",
+      "minGatewayVersion": "2026.4.0"
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
