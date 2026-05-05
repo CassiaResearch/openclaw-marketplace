@@ -44,6 +44,12 @@
       "description": "Per-user Composio access for OpenClaw via the TypeScript SDK. Exposes the six Composio meta-tools (search, schemas, multi-execute, manage-connections, workbench, bash) and supports custom tools, custom toolkits, and custom auth configs.",
       "source": "./tarballs/copilotai-openclaw-composio-plus-0.0.2.tgz",
       "version": "0.0.2"
+    },
+    {
+      "name": "openclaw-explorium",
+      "description": "B2B business and prospect data via Explorium's hosted MCP server. Exposes business and prospect match/fetch/enrich, events, autocomplete, and web search; tools are discovered dynamically from the MCP endpoint at register time.",
+      "source": "./plugins/explorium",
+      "version": "0.1.0"
     }
   ]
 }
