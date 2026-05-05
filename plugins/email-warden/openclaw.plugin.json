@@ -4,6 +4,13 @@
   "description": "Outbound email governance: rate limits, lognormal jitter, working-hours gates, traffic-class policy, bounce/reply/complaint tripwires, and a per-mailbox usage ledger.",
   "version": "0.1.4",
   "pluginApi": "1.0",
+  "contracts": {
+    "tools": [
+      "email_warden_check_send",
+      "email_warden_record_send",
+      "email_warden_record_event"
+    ]
+  },
   "skills": ["./skills"],
   "configSchema": {
     "type": "object",
