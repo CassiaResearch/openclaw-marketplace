@@ -6,38 +6,44 @@
     {
       "name": "copilotai-composio",
       "description": "Composio MCP integration (internal build)",
-      "source": "./plugins/composio"
+      "source": "https://github.com/CassiaResearch/openclaw-marketplace/releases/download/tarballs-2026-05-05-pilot-all/composio-openclaw-plugin-0.0.14.tgz",
+      "version": "0.0.14"
     },
     {
       "name": "openclaw-langsmith-trace",
       "description": "LangSmith tracing for OpenClaw agent turns, inner LLM calls, tool calls, and subagents. Built on the official langsmith SDK.",
-      "source": "./plugins/langsmith"
+      "source": "https://github.com/CassiaResearch/openclaw-marketplace/releases/download/tarballs-2026-05-05-pilot-all/openclaw-langsmith-trace-plugin-0.3.1.tgz",
+      "version": "0.3.1"
     },
     {
       "name": "self-learn",
       "description": "Enables the agent to autonomously create, update, and manage reusable skills from experience",
-      "source": "./plugins/self-learn"
+      "source": "https://github.com/CassiaResearch/openclaw-marketplace/releases/download/tarballs-2026-05-05-pilot-all/self-learn-0.1.1.tgz",
+      "version": "0.1.1"
     },
     {
       "name": "openclaw-unipile",
       "description": "LinkedIn automation via Unipile (messaging, connections, profile, Sales Navigator search) with enforced daily quotas and human-like pacing",
-      "source": "./plugins/unipile"
+      "source": "https://github.com/CassiaResearch/openclaw-marketplace/releases/download/tarballs-2026-05-05-pilot-all/copilotai-openclaw-unipile-plugin-0.7.1.tgz",
+      "version": "0.7.1"
     },
     {
       "name": "openclaw-instantly",
       "description": "Receives Instantly.ai webhooks, authenticates via a custom header, and creates a TaskFlow per event for downstream agent handling",
-      "source": "https://github.com/CassiaResearch/openclaw-marketplace/releases/download/tarballs-pilot-2026-05-05-2/openclaw-instantly-0.1.2.tgz",
+      "source": "https://github.com/CassiaResearch/openclaw-marketplace/releases/download/tarballs-2026-05-05-pilot-all/openclaw-instantly-0.1.2.tgz",
       "version": "0.1.2"
     },
     {
       "name": "copilotai-email-warden",
       "description": "Email Warden for OpenClaw, a plugin that monitors email activity and adds a layer of protection for sending cold emails so that your account doesn't get banned or blacklisted.",
-      "source": "./plugins/email-warden"
+      "source": "https://github.com/CassiaResearch/openclaw-marketplace/releases/download/tarballs-2026-05-05-pilot-all/copilotai-email-warden-0.1.5.tgz",
+      "version": "0.1.5"
     },
     {
       "name": "composio-plus",
       "description": "Per-user Composio access for OpenClaw via the TypeScript SDK. Exposes the six Composio meta-tools (search, schemas, multi-execute, manage-connections, workbench, bash) and supports custom tools, custom toolkits, and custom auth configs.",
-      "source": "./plugins/composio-plus"
+      "source": "https://github.com/CassiaResearch/openclaw-marketplace/releases/download/tarballs-2026-05-05-pilot-all/copilotai-openclaw-composio-plus-0.0.2.tgz",
+      "version": "0.0.2"
     }
   ]
 }
