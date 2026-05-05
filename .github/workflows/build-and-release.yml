@@ -1,0 +1,92 @@
+name: Build and release plugin tarballs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "plugins/**"
+      - "scripts/build-plugin-tarballs.mjs"
+      - "scripts/rewrite-marketplace-urls.mjs"
+      - ".github/workflows/build-and-release.yml"
+      - "!plugins/**/.gitignore"
+      - "!plugins/**/README.md"
+      - "!plugins/**/LICENSE"
+  workflow_dispatch:
+
+concurrency:
+  group: build-and-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Build plugin tarballs
+        run: node scripts/build-plugin-tarballs.mjs
+
+      - name: Skip release if nothing built
+        id: check-built
+        run: |
+          built_count=$(jq '.built | length' tarballs-staged/manifest.json)
+          echo "built_count=$built_count" >> "$GITHUB_OUTPUT"
+          if [ "$built_count" = "0" ]; then
+            echo "Nothing buildable changed; skipping release."
+          fi
+
+      - name: Compute release tag
+        if: steps.check-built.outputs.built_count != '0'
+        id: tag
+        run: echo "tag=tarballs-$(date -u +%Y-%m-%d-%H%M)" >> "$GITHUB_OUTPUT"
+
+      - name: Create release and upload tarballs
+        if: steps.check-built.outputs.built_count != '0'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Plugin tarballs ${{ steps.tag.outputs.tag }}
+          files: tarballs-staged/*.tgz
+          generate_release_notes: false
+          body: |
+            Auto-generated plugin tarball release.
+
+            Built tarballs:
+            ${{ steps.check-built.outputs.built_count }} plugin(s) — see release assets and `manifest.json` in the run artifacts for details.
+
+      - name: Rewrite marketplace.json with new URLs
+        if: steps.check-built.outputs.built_count != '0'
+        run: node scripts/rewrite-marketplace-urls.mjs --tag "${{ steps.tag.outputs.tag }}"
+
+      - name: Commit marketplace.json
+        if: steps.check-built.outputs.built_count != '0'
+        run: |
+          if git diff --quiet -- marketplace.json; then
+            echo "marketplace.json unchanged"
+            exit 0
+          fi
+          git config user.name "marketplace-bot"
+          git config user.email "marketplace-bot@users.noreply.github.com"
+          git add marketplace.json
+          git commit -m "build: refresh tarball URLs for ${{ steps.tag.outputs.tag }}"
+          git push
+
+      - name: Upload manifest as run artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-manifest
+          path: tarballs-staged/manifest.json
