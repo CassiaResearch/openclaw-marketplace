@@ -1,168 +1,186 @@
 # OpenClaw Plugin Marketplace
 
-Internal plugin registry for the team. Plugins live here as git subtrees so they can be installed directly via OpenClaw's `--marketplace` flag without going through the public ClawHub registry.
+Internal plugin registry for the team. Plugins live here as git subtrees pulled from per-plugin upstream repos. CI builds each plugin's `dist/` once per change, packs it into a `.tgz`, commits the tarball to the tracked `tarballs/` directory at the marketplace root, and rewrites `marketplace.json` so each entry's `source` field is a relative path to its tarball.
+
+This shape is required by OpenClaw 2026.5.3+, whose install validator rejects packages that point at TypeScript sources without compiled `dist/` peers, and by OpenClaw's marketplace validator, which only accepts `kind: "path"` with a relative path inside the marketplace tree for **remote** marketplace installs (`--marketplace https://...`). Both constraints are satisfied by tarballs committed under `tarballs/`.
 
 ## Structure
 
 ```
 openclaw-marketplace/
-├── marketplace.json        ← registry index (required)
+├── marketplace.json                          ← registry index (CI rewrites it)
 ├── README.md
+├── .github/workflows/build-and-publish.yml   ← rebuilds tarballs on every push
+├── scripts/
+│   ├── build-plugin-tarballs.mjs             ← npm pack per plugin → tarballs-staged/
+│   └── publish-tarballs.mjs                  ← copies staged → tarballs/, rewrites marketplace.json, prunes orphans
+├── tarballs/                                 ← tracked tarballs (CI commits here)
+│   ├── openclaw-instantly-0.1.2.tgz
+│   └── ...
 └── plugins/
-    ├── composio/           ← subtree from yourorg/openclaw-composio-plugin
-    └── another-plugin/     ← subtree from yourorg/another-plugin
+    ├── instantly/                            ← subtree from CassiaResearch/openclaw-instantly
+    └── ...
 ```
 
-Each plugin is a subdirectory containing at minimum an `openclaw.plugin.json` manifest. `marketplace.json` is the index OpenClaw reads to find them by name.
-
-> **Constraint:** `marketplace.json` entries must use relative paths. OpenClaw rejects any entry pointing to an external URL or absolute path, so plugin code must physically live inside this repo.
+`plugins/<n>/` carries TypeScript source. The compiled tarballs in `tarballs/` are tracked at the marketplace root (outside any subtree), so `git subtree push` (if ever run) cannot include them — the build artifacts cannot leak back to upstream plugin repos.
 
 ---
 
-## Installing a Plugin
+## Installing a Plugin (OpenClaw side)
 
 ```bash
-openclaw plugins install copilotai-composio --marketplace https://github.com/CassiaResearch/openclaw-marketplace
+openclaw plugins install <plugin-name> --marketplace https://github.com/CassiaResearch/openclaw-marketplace
 openclaw gateway restart
 ```
 
-Then set any required config:
+`<plugin-name>` is the entry's `name` in `marketplace.json` (e.g. `openclaw-instantly`, `copilotai-email-warden`). OpenClaw clones the marketplace, follows the entry's relative `source` to a `.tgz` inside the clone, extracts it, and installs the plugin to `~/.openclaw/extensions/<plugin-id>/`.
+
+If the plugin's bundle hits the install scanner's dangerous-code patterns (e.g. `process.env` access combined with HTTP send for a webhook plugin), add `--dangerously-force-unsafe-install`:
 
 ```bash
-openclaw config set plugins.entries.composio-internal.config.consumerKey "ck_..."
+openclaw plugins install openclaw-instantly --marketplace https://github.com/CassiaResearch/openclaw-marketplace --dangerously-force-unsafe-install
 ```
 
----
-
-## Adding a Plugin from an External Repo
-
-Use this when forking a community plugin (e.g. `ComposioHQ/openclaw-composio-plugin`).
-
-**1. Fork the upstream repo** to your org on GitHub (e.g. `CassiaResearch/openclaw-composio-plugin`). This fork is where you'll merge upstream changes before they land here.
-
-**2. Confirm it has `openclaw.plugin.json`** at the root. If it's npm-only with no manifest, it can't be served from a marketplace — install it directly from npm instead.
-
-**3. Add it as a subtree** (run from the marketplace repo root, on a clean working tree):
+After install, set required config:
 
 ```bash
-git subtree add --prefix plugins/composio \
-  https://github.com/CassiaResearch/openclaw-composio-plugin.git master --squash
-```
-
-**4. Update the plugin ID** in `plugins/composio/openclaw.plugin.json` and `plugins/composio/index.ts` to avoid clashing with the upstream npm package:
-
-```json
-{
-  "id": "copilotai-composio",
-  "name": "Composio (Internal)",
-  "version": "1.0.0",
-  ...
-}
-```
-
-**5. Register it in `marketplace.json`:**
-
-```json
-{
-  "name": "cassia-openclaw-marketplace",
-  "version": "1.0.0",
-  "owner": "Cassia Research",
-  "plugins": [
-    {
-      "name": "copilotai-composio",
-      "description": "Composio MCP integration (internal build)",
-      "source": "./plugins/composio"
-    }
-  ]
-}
-```
-
-**6. Commit and push:**
-
-```bash
-git add plugins/composio marketplace.json
-git commit -m "feat: add composio plugin"
-git push
-```
-
----
-
-## Modifying a Plugin
-
-Edit files directly inside `plugins/<n>/` — these are regular commits in this repo and survive future subtree pulls via merge.
-
-```bash
-code plugins/composio/index.ts
-
-# Bump the version so OpenClaw detects an update
-# Then commit — always commit before running a subtree pull
-git add plugins/composio
-git commit -m "fix: update composio MCP endpoint"
-git push
-
-git subtree push --prefix plugins/composio https://github.com/CassiaResearch/openclaw-composio-plugin.git master
-```
-
-Team members pick up the change:
-
-```bash
-openclaw plugins update copilotai-composio
+openclaw config set plugins.entries.<plugin-id>.config.<key> "<value>"
 openclaw gateway restart
 ```
 
+To pick up a new release:
+
+```bash
+openclaw plugins update <plugin-id>
+openclaw gateway restart
+```
+
+`update` checks the entry's `version` against what's installed; bumping the version in this repo (which CI does on every plugin change) is what makes consumers pick up the new tarball.
+
 ---
 
-## Syncing Upstream Changes
+## Updating an Existing Plugin
 
-When the original upstream repo ships updates, pull them into your fork first, then into here.
+The common case: a plugin's source changes upstream and the marketplace needs the rebuilt tarball.
 
-**1. Merge upstream into your fork** (run in `CassiaResearch/openclaw-composio-plugin`):
+**1. Pull upstream into the marketplace.** From a clean working tree:
 
 ```bash
-git remote add upstream git@github.com:ComposioHQ/openclaw-composio-plugin.git
-git fetch upstream
-git merge upstream/master
-git push origin master
+/usr/bin/git subtree pull --prefix plugins/<n> \
+  https://github.com/<org>/openclaw-<n>.git <branch> --squash
 ```
 
-> `git remote add upstream` is one-time only. On future syncs just `git fetch upstream && git merge upstream/master`.
+`/usr/bin/git` is required if your `git` binary lacks `git-subtree` (the system git does on most setups).
 
-**2. Pull the fork into the marketplace** (run in this repo, on a clean working tree):
+**2. Bump versions.** Edit both `plugins/<n>/package.json` and `plugins/<n>/openclaw.plugin.json` to the new version. The `version` field is what `openclaw plugins update` compares against, so bumping is required for consumers to pick up the change.
+
+**3. (Optional) Rebuild locally to verify.**
 
 ```bash
-git subtree pull --prefix plugins/composio \
-  git@github.com:yourorg/openclaw-composio-plugin.git master --squash
+node scripts/build-plugin-tarballs.mjs --only <plugin-name>
+node scripts/publish-tarballs.mjs
 ```
 
-> ⚠️ Review `openclaw.plugin.json` after the pull — the upstream version won't have your internal `id`. Don't let it get overwritten.
+`build-plugin-tarballs.mjs` runs `npm pack` (or `pnpm pack` for self-learn) inside `plugins/<n>/`, which auto-runs the plugin's `prepack` → `build` script and emits the tarball to `tarballs-staged/`. `publish-tarballs.mjs` copies the staged tarballs into `tarballs/`, rewrites `marketplace.json`, and prunes any stale tarballs that aren't referenced anymore.
 
-**3. Bump the version and push:**
+**4. Commit and push.**
 
 ```bash
-git add plugins/composio/openclaw.plugin.json
-git commit -m "chore: sync composio upstream vX.Y.Z"
+git add plugins/<n>/ tarballs/ marketplace.json
+git commit -m "chore(<n>): sync upstream and bump to vX.Y.Z"
 git push
-git subtree push --prefix plugins/composio https://github.com/CassiaResearch/openclaw-composio-plugin.git master
+```
+
+CI rebuilds and publishes on every push to main that touches `plugins/**`, so you can also push only the plugin source change and let CI handle the tarball + marketplace.json rewrite. If you do that, expect a follow-up `marketplace-bot` commit with the rebuilt tarball.
+
+---
+
+## Adding a New Plugin
+
+Use this when bringing a community plugin or a new internal plugin into the marketplace.
+
+**1. Fork the upstream repo** (or create a fresh repo) so the marketplace has a stable git URL it can subtree-pull from.
+
+**2. Confirm the plugin's `package.json` is build-ready.** It should have:
+
+- `scripts.build` that compiles TypeScript to `dist/` (e.g., `"tsc"` or `"tsc -p tsconfig.build.json"`).
+- `scripts.prepack` that invokes `build` so `npm pack` rebuilds before producing the tarball.
+- `openclaw.runtimeExtensions: ["./dist/index.js"]` (or whatever `dist/`-relative path your build produces).
+- `openclaw.extensions` pointing at the same `./dist/index.js`. Both fields point at the compiled output; this is the lossless-claw / `@openclaw/kitchen-sink` pattern. Marketplace consumers get the compiled output only, so referencing a source `.ts` would warn at install time.
+- `files: ["dist/**", "openclaw.plugin.json", "README.md", ...]`. The npm pack tarball includes only what's listed; do not list `index.ts` or `src/` if you ship compiled output.
+- `peerDependencies: { "openclaw": "*" }`. npm 7+ auto-installs the peer during local builds, which is what makes type imports from `openclaw/plugin-sdk` resolve under `tsc`.
+- `devDependencies` includes `typescript` and `@types/node` so the build runs on a fresh clone.
+
+**3. Add it as a subtree.** From a clean working tree on `main`:
+
+```bash
+/usr/bin/git subtree add --prefix plugins/<n> \
+  https://github.com/<org>/openclaw-<n>.git <branch> --squash
+```
+
+**4. Verify the plugin's `openclaw.plugin.json`** has a unique `id` and a starting `version`.
+
+**5. Register it in `marketplace.json`.** Add an entry with the manifest's `id` as `name`, a `description`, and a placeholder `source`:
+
+```json
+{
+  "name": "<plugin-id>",
+  "description": "Short description shown in `openclaw plugins marketplace list`",
+  "source": "./plugins/<n>",
+  "version": "0.0.0"
+}
+```
+
+CI will replace `source` with the relative tarball path on the next build (`./tarballs/<pkg-name>-<version>.tgz`).
+
+**6. Verify the build works locally:**
+
+```bash
+node scripts/build-plugin-tarballs.mjs --only <plugin-id>
+ls tarballs-staged/
+```
+
+**7. Commit and push.** CI will produce the first tracked tarball.
+
+```bash
+git add plugins/<n>/ marketplace.json
+git commit -m "feat: add <plugin-id> plugin"
+git push
 ```
 
 ---
 
 ## Removing a Plugin
 
-Remove it from `marketplace.json`, then optionally delete the directory:
-
 ```bash
-rm -rf plugins/my-old-plugin
-git add -A
-git commit -m "chore: remove my-old-plugin"
+git rm -r plugins/<n>
+git rm tarballs/<pkg-name>-*.tgz
+# Edit marketplace.json to remove the entry
+git add marketplace.json
+git commit -m "chore: remove <plugin-name>"
 git push
 ```
 
-Removing from `marketplace.json` stops new installs. Existing installs are unaffected until someone runs:
+`publish-tarballs.mjs` also auto-prunes orphaned tarballs on the next CI run, so you can omit the explicit `git rm tarballs/...` and let CI clean up.
+
+---
+
+## How the Build/Publish Pipeline Works
+
+`.github/workflows/build-and-publish.yml` runs on push to `main` whenever `plugins/**` changes (or on `workflow_dispatch`):
+
+1. `node scripts/build-plugin-tarballs.mjs` walks `plugins/*/`, picks any plugin with `openclaw.runtimeExtensions` plus a `build` script, runs `npm install --include=dev` (or `pnpm install`), then `npm pack --pack-destination=../../tarballs-staged/`. The plugin's `prepack` script auto-runs the build before pack.
+2. `node scripts/publish-tarballs.mjs` copies each staged tarball to `tarballs/`, rewrites `marketplace.json` to point each matched entry at the new relative path with the bumped version, and prunes any old tarballs no longer referenced.
+3. The action commits both `tarballs/` and `marketplace.json` back to `main` via `marketplace-bot`.
+
+To run the same flow locally:
 
 ```bash
-openclaw plugins uninstall my-old-plugin
+node scripts/build-plugin-tarballs.mjs                 # all plugins
+node scripts/publish-tarballs.mjs
 ```
+
+`tarballs-staged/` is gitignored. `tarballs/` is tracked.
 
 ---
 
@@ -170,48 +188,69 @@ openclaw plugins uninstall my-old-plugin
 
 ### marketplace.json
 
-| Field              | Description                                                  |
-| ------------------ | ------------------------------------------------------------ |
-| `name`             | Marketplace identifier used in install shorthands            |
-| `owner`            | GitHub org/user                                              |
-| `plugins[].name`   | Name used in `openclaw plugins install <n>@...`              |
-| `plugins[].source` | Relative path to the plugin directory — must start with `./` |
+| Field                   | Description                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------------- |
+| `name`                  | Marketplace identifier                                                                            |
+| `owner`                 | GitHub org/user                                                                                   |
+| `version`               | Marketplace metadata version                                                                      |
+| `plugins[].name`        | Plugin id (must match `openclaw.plugin.json` `id`). Used in `openclaw plugins install <name>`.    |
+| `plugins[].source`      | Relative path to the tarball, e.g. `./tarballs/<pkg-name>-<version>.tgz` (CI-managed).            |
+| `plugins[].version`     | Tarball version (CI-managed; mirrors the plugin's `package.json` version).                        |
+| `plugins[].description` | Short description shown by `openclaw plugins marketplace list`.                                   |
 
-### openclaw.plugin.json
+### plugins/&lt;n&gt;/package.json (openclaw block)
 
-| Field               | Required    | Description                                                             |
-| ------------------- | ----------- | ----------------------------------------------------------------------- |
-| `id`                | Yes         | Unique kebab-case identifier. Don't reuse an upstream npm package name. |
-| `version`           | Yes         | Semver. Bump on every change so OpenClaw detects updates.               |
-| `pluginApi`         | Yes         | Currently `"1.0"`                                                       |
-| `minGatewayVersion` | Recommended | Minimum gateway version required, e.g. `"2026.1.0"`                     |
-| `configSchema`      | Yes         | JSON Schema for config. Use `{}` if no config needed.                   |
+| Field                          | Required | Description                                                                       |
+| ------------------------------ | -------- | --------------------------------------------------------------------------------- |
+| `openclaw.extensions`          | Yes      | Array of entry paths. For tarball-distributed plugins: `["./dist/index.js"]`.     |
+| `openclaw.runtimeExtensions`   | Yes      | Same shape as `extensions`; what OpenClaw loads at runtime. Same path is fine.    |
+| `peerDependencies.openclaw`    | Yes      | `"*"` is fine. npm auto-installs this for local builds so type imports resolve.   |
+| `scripts.build`                | Yes      | Compiles TypeScript to `dist/`. e.g. `"tsc"` or `"tsc -p tsconfig.build.json"`.   |
+| `scripts.prepack`              | Yes      | Invokes `build` so `npm pack` rebuilds before packing.                            |
+| `files`                        | Yes      | Whitelist for npm pack. Must include `dist/**` and `openclaw.plugin.json`.        |
+| `devDependencies`              | Yes      | Must include `typescript` and `@types/node` for fresh-clone builds.               |
+
+### plugins/&lt;n&gt;/openclaw.plugin.json
+
+| Field          | Required    | Description                                                       |
+| -------------- | ----------- | ----------------------------------------------------------------- |
+| `id`           | Yes         | Unique kebab-case identifier. Must match `marketplace.json` name. |
+| `version`      | Recommended | Bump on every change so `openclaw plugins update` triggers.       |
+| `pluginApi`    | Yes         | Currently `"1.0"`.                                                |
+| `configSchema` | Yes         | JSON Schema for plugin config. Use `{ "type": "object" }` if none.|
 
 ---
 
 ## Troubleshooting
 
-**`plugin source not found` on install** — the `source` path in `marketplace.json` doesn't match the actual directory. Ensure it's a relative path (`./plugins/composio`) and that `openclaw.plugin.json` exists inside it.
+**`may not use url plugin sources`** — the `source` field is an https URL. OpenClaw rejects URL sources for remote marketplace installs; only relative paths inside the marketplace tree are allowed. Fix `source` to `./tarballs/<...>.tgz` and re-run `publish-tarballs.mjs`.
 
-**`incompatible pluginApi`** — run `openclaw update` to upgrade your gateway, or check if you accidentally pulled a newer manifest from upstream.
+**`package install requires compiled runtime output for TypeScript entry`** — the plugin's tarball is missing `dist/`. Cause is usually a stale `package.json` that lists `index.ts` in `files` or doesn't declare `runtimeExtensions`. Fix the upstream package.json (see "Adding a New Plugin" checklist), pull the subtree, and let CI rebuild.
 
-**Marketplace clone fails** — SSH credentials aren't set up. Run `gh auth login` or configure SSH access for `github.com/yourorg`.
+**`extension entry not found: ./index.ts`** at install — `openclaw.extensions` still points at a `.ts` source path. Switch it to the same `./dist/index.js` as `runtimeExtensions`.
 
-**Changes not showing after `plugins update`** — force a cache refresh:
+**Install scanner blocks the plugin (`dangerous code patterns: ...`)** — the install scanner flags `process.env` access combined with HTTP send. For trusted internal plugins, install with `--dangerously-force-unsafe-install`. Reviewing the flagged code first is recommended.
+
+**`openclaw plugins update <id>` reports "already at <version>"** — the `version` field in `marketplace.json` (or the tarball) didn't change. Bump the version in `plugins/<n>/package.json` and `plugins/<n>/openclaw.plugin.json`, push, and let CI republish.
+
+**CI rebuild produced a stale tarball** — verify locally:
 
 ```bash
-openclaw plugins marketplace update yourorg-openclaw-marketplace
-openclaw plugins update <plugin-id>
-openclaw gateway restart
+node scripts/build-plugin-tarballs.mjs --only <plugin-id>
+tar -tzf tarballs-staged/<pkg-name>-<version>.tgz | head
 ```
 
-**Plugin installed but tools unavailable** — check it's enabled and the gateway has restarted:
+`package/dist/index.js` and `package/openclaw.plugin.json` must be present. If not, the plugin's `prepack`/`build` scripts didn't run; check `package.json`.
+
+**`git subtree pull` fails with "not our ref"** — the split history reaches back through a removed prior subtree. Workaround: clone the upstream into `/tmp`, apply the change manually, push a feature branch.
+
+**`git subtree pull` fails with "working tree has modifications"** — the previous merge hasn't fully settled. Run pulls sequentially as separate shell invocations rather than in a `for` loop.
+
+**Plugin installed but tools unavailable** — confirm enabled and gateway restarted:
 
 ```bash
 openclaw plugins list --verbose
 openclaw plugins enable <plugin-id>
 openclaw gateway restart
-openclaw plugins doctor   # surfaces load errors
+openclaw plugins doctor
 ```
-
-**`git subtree pull` fails with a dirty working tree** — commit or stash any uncommitted changes first. Subtree operations require a clean working directory.
