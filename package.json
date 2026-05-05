@@ -15,7 +15,7 @@
   "license": "MIT",
   "author": "Cassia Research",
   "files": [
-    "src",
+    "dist/**",
     "skills",
     "openclaw.plugin.json",
     "README.md",
@@ -23,10 +23,19 @@
   ],
   "openclaw": {
     "extensions": [
-      "./src/index.ts"
-    ]
+      "./dist/index.js"
+    ],
+    "runtimeExtensions": [
+      "./dist/index.js"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.4.0",
+      "minGatewayVersion": "2026.4.0"
+    }
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

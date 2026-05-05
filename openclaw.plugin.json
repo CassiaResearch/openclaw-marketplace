@@ -3,8 +3,11 @@
   "name": "Explorium",
   "description": "B2B business and prospect data via Explorium's hosted MCP server. Tools (match/fetch/enrich businesses and prospects, business events, enrollments) are discovered dynamically from the MCP endpoint at register time.",
   "version": "0.1.0",
-  "pluginApi": "1.0",
   "skills": ["./skills"],
+  "activation": {
+    "onStartup": true,
+    "onCapabilities": ["tool"]
+  },
   "contracts": {
     "tools": [
       "match-business",
