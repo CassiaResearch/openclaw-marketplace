@@ -47,7 +47,7 @@ async function fetchTools(config: ComposioConfig): Promise<Tool[]> {
   const raw = await res.text();
   let jsonStr = raw;
   const dataMatch = raw.match(/^data:\s*(.+)$/m);
-  if (dataMatch) jsonStr = dataMatch[1];
+  if (dataMatch) jsonStr = dataMatch[1]!;
 
   const parsed = JSON.parse(jsonStr);
   if (parsed.error) throw new Error(parsed.error.message ?? JSON.stringify(parsed.error));
