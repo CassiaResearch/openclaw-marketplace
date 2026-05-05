@@ -3,6 +3,16 @@
   "name": "Composio",
   "description": "Access 1000+ third-party tools via Composio (Gmail, Slack, GitHub, Notion, etc.)",
   "version": "0.0.14",
+  "contracts": {
+    "tools": [
+      "COMPOSIO_SEARCH_TOOLS",
+      "COMPOSIO_GET_TOOL_SCHEMAS",
+      "COMPOSIO_MULTI_EXECUTE_TOOL",
+      "COMPOSIO_MANAGE_CONNECTIONS",
+      "COMPOSIO_REMOTE_WORKBENCH",
+      "COMPOSIO_REMOTE_BASH_TOOL"
+    ]
+  },
   "configContracts": {
     "secretInputs": {
       "bundledDefaultEnabled": false,
