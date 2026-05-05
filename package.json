@@ -1,0 +1,52 @@
+{
+  "name": "openclaw-explorium-plugin",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "OpenClaw Explorium plugin — B2B business and prospect data via Explorium's hosted MCP server",
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin",
+    "explorium",
+    "mcp",
+    "b2b-data",
+    "agents",
+    "plugin"
+  ],
+  "license": "MIT",
+  "author": "Cassia Research",
+  "files": [
+    "src",
+    "skills",
+    "openclaw.plugin.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "openclaw": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1"
+  },
+  "peerDependencies": {
+    "openclaw": "^2026.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "openclaw": "^2026.4.21",
+    "prettier": "^3.8.3",
+    "typescript": "^5.5.4",
+    "vitest": "^2.1.9"
+  }
+}
