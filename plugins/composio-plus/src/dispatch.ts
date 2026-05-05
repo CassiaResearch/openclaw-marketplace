@@ -50,7 +50,7 @@ export async function routeMultiExecute(
   const localBuckets: Array<{ index: number; slug: string; args: Record<string, unknown> }> = [];
   const remoteBuckets: Array<{ index: number; raw: ToolItem }> = [];
   for (let i = 0; i < items.length; i++) {
-    const item = items[i];
+    const item = items[i]!;
     const slug = String(item.tool_slug ?? "");
     if (slug && localSlugs.has(slug.toUpperCase())) {
       localBuckets.push({ index: i, slug, args: item.arguments ?? {} });
