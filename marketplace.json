@@ -26,7 +26,8 @@
     {
       "name": "openclaw-instantly",
       "description": "Receives Instantly.ai webhooks, authenticates via a custom header, and creates a TaskFlow per event for downstream agent handling",
-      "source": "./plugins/instantly"
+      "source": "https://github.com/CassiaResearch/openclaw-marketplace/releases/download/tarballs-pilot-2026-05-05-2/openclaw-instantly-0.1.2.tgz",
+      "version": "0.1.2"
     },
     {
       "name": "copilotai-email-warden",
