@@ -1,0 +1,67 @@
+name: Build and publish plugin tarballs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "plugins/**"
+      - "scripts/build-plugin-tarballs.mjs"
+      - "scripts/publish-tarballs.mjs"
+      - ".github/workflows/build-and-publish.yml"
+      - "!plugins/**/.gitignore"
+      - "!plugins/**/README.md"
+      - "!plugins/**/LICENSE"
+  workflow_dispatch:
+
+concurrency:
+  group: build-and-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Build plugin tarballs
+        run: node scripts/build-plugin-tarballs.mjs
+
+      - name: Publish tarballs to tracked tarballs/ and rewrite marketplace.json
+        run: node scripts/publish-tarballs.mjs
+
+      - name: Commit tarballs and marketplace.json
+        run: |
+          git config user.name "marketplace-bot"
+          git config user.email "marketplace-bot@users.noreply.github.com"
+          if git diff --quiet --cached -- tarballs/ marketplace.json && git diff --quiet -- tarballs/ marketplace.json; then
+            echo "no marketplace changes to commit"
+            exit 0
+          fi
+          git add tarballs/ marketplace.json
+          if git diff --cached --quiet; then
+            echo "nothing staged after add (rebuild produced identical artifacts)"
+            exit 0
+          fi
+          git commit -m "build: refresh plugin tarballs"
+          git push
+
+      - name: Upload build manifest as run artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-manifest
+          path: tarballs-staged/manifest.json

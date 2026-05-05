@@ -1,21 +1,32 @@
 {
   "name": "openclaw-instantly",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "type": "module",
   "description": "OpenClaw plugin for Instantly.ai integrations (starting with inbound webhooks).",
   "license": "UNLICENSED",
   "private": true,
   "files": [
-    "index.ts",
+    "dist/**",
     "openclaw.plugin.json",
     "README.md"
   ],
   "openclaw": {
     "extensions": [
-      "./index.ts"
+      "./dist/index.js"
+    ],
+    "runtimeExtensions": [
+      "./dist/index.js"
     ]
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepack": "npm run build"
   },
   "peerDependencies": {
     "openclaw": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
   }
 }
