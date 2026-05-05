@@ -2,7 +2,7 @@
   "id": "openclaw-instantly",
   "name": "OpenClaw Instantly",
   "description": "Receives Instantly.ai webhooks, verifies a custom auth header, dedupes, and creates a TaskFlow per event for downstream agent handling. Future home for other Instantly integrations.",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
