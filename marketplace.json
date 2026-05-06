@@ -47,9 +47,9 @@
     },
     {
       "name": "openclaw-explorium",
-      "description": "B2B business and prospect data via Explorium's hosted MCP server. Exposes business and prospect match/fetch/enrich, events, autocomplete, and web search; tools are discovered dynamically from the MCP endpoint at register time.",
-      "source": "./tarballs/openclaw-explorium-plugin-0.1.1.tgz",
-      "version": "0.1.1"
+      "description": "Workflow skill for the Explorium MCP server. Tools are surfaced via OpenClaw bundle-mcp from mcp.servers.explorium.",
+      "source": "./tarballs/openclaw-explorium-plugin-0.2.0.tgz",
+      "version": "0.2.0"
     }
   ]
 }
