@@ -5,6 +5,7 @@ import { buildSessionFromConfig, type SessionBundle } from "./src/session.js";
 import { routeMultiExecute } from "./src/dispatch.js";
 import { fetchMetaToolsFromSession } from "./src/refresh.js";
 import { registerCli } from "./src/cli.js";
+import { getSystemPrompt, type ComposioPlusPromptState } from "./src/prompt.js";
 import type { CachedMetaTool } from "./src/types.js";
 
 const COMPOSIO_MULTI_EXECUTE_TOOL = "COMPOSIO_MULTI_EXECUTE_TOOL";
@@ -86,6 +87,20 @@ const composioPlusPlugin = {
     // user ran a CLI subcommand. CLI subcommands are already registered above.
     if (api.registrationMode !== "full") return;
 
+    // Mutable state shared with the prompt hook below — updated as the
+    // cache-fast-path completes and as the cache-refresh service runs.
+    // Closure-captured by the on() callback, so subsequent prompt builds see
+    // the latest state without re-registering the hook.
+    const promptState: ComposioPlusPromptState = {
+      ready: false,
+      toolCount: 0,
+      connectError: "",
+    };
+
+    api.on("before_prompt_build", () => ({
+      prependSystemContext: getSystemPrompt(promptState),
+    }));
+
     if (!hasRequiredCredentials(config)) {
       // apiKey is empty either because nothing is set or because a configured
       // secret reference resolved to empty (e.g. env var not exported into
@@ -96,6 +111,8 @@ const composioPlusPlugin = {
           "On local dev: run 'openclaw composio setup'. " +
           "On managed deploys: verify the secret reference resolves at gateway startup.",
       );
+      promptState.ready = true;
+      promptState.connectError = "apiKey or userId is missing or unresolved";
       return;
     }
 
@@ -126,6 +143,8 @@ const composioPlusPlugin = {
         registerMetaToolWithDispatch(api, tool, sessionPromise);
         registeredNames.add(tool.name);
       }
+      promptState.ready = true;
+      promptState.toolCount = cached.tools.length;
       api.logger.info(`[composio-plus] Ready — ${cached.tools.length} meta-tools registered (cache fast-path)`);
     } else {
       api.logger.info(
@@ -162,6 +181,13 @@ const composioPlusPlugin = {
 
           writeMetaToolCache(config.baseURL, fresh);
 
+          // Reaching here means the meta-tool surface is healthy. Even if the
+          // cache fast-path already set ready=true, refresh confirms it and
+          // clears any earlier connectError set by a previous failed start.
+          promptState.ready = true;
+          promptState.toolCount = registeredNames.size;
+          promptState.connectError = "";
+
           if (lateRegistered > 0) {
             api.logger.info(
               `[composio-plus] cache-refresh: late-registered ${lateRegistered} meta-tool(s) (${registeredNames.size} total active)`,
@@ -177,9 +203,15 @@ const composioPlusPlugin = {
             );
           }
         } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
           api.logger.warn(
-            `[composio-plus] cache-refresh failed: ${err instanceof Error ? err.message : String(err)} — keeping ${registeredNames.size} cached tool(s) registered`,
+            `[composio-plus] cache-refresh failed: ${msg} — keeping ${registeredNames.size} cached tool(s) registered`,
           );
+          // Mark ready so the prompt switches from "loading" to "errored" — but
+          // preserve toolCount if the cache fast-path already populated it,
+          // since those tools are still callable while the refresh is broken.
+          promptState.ready = true;
+          promptState.connectError = msg;
         }
       },
     });
