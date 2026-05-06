@@ -1,6 +1,6 @@
 {
   "name": "openclaw-explorium-plugin",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "OpenClaw Explorium plugin — B2B business and prospect data via Explorium's hosted MCP server",
   "keywords": [
@@ -45,11 +45,9 @@
   "engines": {
     "node": ">=20"
   },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.27.1"
-  },
+  "dependencies": {},
   "peerDependencies": {
-    "openclaw": "^2026.4"
+    "openclaw": "^2026"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
