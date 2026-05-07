@@ -1,6 +1,6 @@
 {
   "name": "@copilotai/openclaw-composio-plus",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "type": "module",
   "description": "OpenClaw Composio plugin (TS SDK) — meta-tool surface, per-user auth, custom tools/toolkits/auth-configs.",
   "license": "UNLICENSED",

@@ -128,88 +128,90 @@ const composioPlusPlugin = {
       },
     );
 
-    // Track names already registered, shared between the cache-fast-path and
-    // service.start's late-registration. Both run in the same JS process, so
-    // this Set is the source of truth for "is this tool already in the
-    // openclaw registry."
+    // Snapshot of the tool names registered synchronously below. Read by
+    // cache-refresh.start to diff against the live SDK output (added /
+    // removed). Doesn't grow after register() returns.
     const registeredNames = new Set<string>();
 
+    // Synchronous registration from the disk cache. The cache is the sole
+    // source of truth: it's pre-seeded by `openclaw composio setup` and
+    // refreshed on every gateway start by the cache-refresh service below.
+    // Registration must happen inside register() so entries land in
+    // registry.tools before the manifest snapshot freezes and the HTTP
+    // listener binds. The descriptor cache memoizes factory output on the
+    // first session resolution and openclaw exposes no invalidation API,
+    // so late registrations from service.start would be silently shadowed.
     const cached = readMetaToolCache(config.baseURL);
     if (cached) {
-      api.logger.info(
-        `[composio-plus] Loading ${cached.tools.length} meta-tools from cache (age ${Math.round(cached.ageMs / 1000)}s)`,
-      );
       for (const tool of cached.tools) {
         registerMetaToolWithDispatch(api, tool, sessionPromise);
         registeredNames.add(tool.name);
       }
       promptState.ready = true;
       promptState.toolCount = cached.tools.length;
-      api.logger.info(`[composio-plus] Ready — ${cached.tools.length} meta-tools registered (cache fast-path)`);
-    } else {
       api.logger.info(
-        "[composio-plus] No cache yet — meta-tools will register via the cache-refresh service before the gateway accepts agent turns",
+        `[composio-plus] Ready — ${cached.tools.length} meta-tools registered from disk cache (age ${Math.round(cached.ageMs / 1000)}s)`,
+      );
+    } else {
+      api.logger.warn(
+        "[composio-plus] No disk cache — this gateway run has zero meta-tools. " +
+          "Run `openclaw composio setup` to pre-seed the cache, then restart.",
       );
     }
 
-    // Cache-refresh service. Awaited by the gateway during boot
-    // (`await startPluginServices(...)` in server-startup-post-attach.ts), so
-    // any tools we late-register here ARE visible to the first agent turn.
-    //
-    //  - Cache hit: late-registers any meta-tools added upstream that aren't
-    //    in our cache yet; logs warn about removed ones (no unregister API).
-    //  - Cache miss (first run): registers all meta-tools fresh.
-    //  - On error: keeps whatever's currently registered, doesn't overwrite
-    //    cache (next gateway start retries from the last-known-good state).
+    // Refreshes the disk cache and logs diffs against what's currently
+    // registered. Tools added/removed upstream surface on the *next* gateway
+    // start, not this one — service.start runs on a setImmediate after the
+    // HTTP listener binds (server-startup-post-attach.ts:768), and the
+    // descriptor cache is populated from registry.tools on the first session
+    // resolution with no plugin-facing invalidation API
+    // (tool-descriptor-cache.ts), so any late mutations to registry.tools
+    // are silently shadowed. This service therefore never calls
+    // registerMetaToolWithDispatch — it only writes to disk and logs.
     api.registerService({
       id: "composio-plus-cache-refresh",
       start: async () => {
         try {
           const { session } = await sessionPromise;
           const fresh = await fetchMetaToolsFromSession(session);
-
-          let lateRegistered = 0;
-          for (const tool of fresh) {
-            if (registeredNames.has(tool.name)) continue;
-            registerMetaToolWithDispatch(api, tool, sessionPromise);
-            registeredNames.add(tool.name);
-            lateRegistered++;
-          }
-
           const freshNames = new Set(fresh.map((t) => t.name));
-          const stale = [...registeredNames].filter((n) => !freshNames.has(n));
+          const added = fresh
+            .filter((t) => !registeredNames.has(t.name))
+            .map((t) => t.name);
+          const removed = [...registeredNames].filter((n) => !freshNames.has(n));
 
           writeMetaToolCache(config.baseURL, fresh);
 
           // Reaching here means the meta-tool surface is healthy. Even if the
-          // cache fast-path already set ready=true, refresh confirms it and
-          // clears any earlier connectError set by a previous failed start.
+          // disk-cache or bundled-default path already set ready=true, refresh
+          // confirms it and clears any earlier connectError.
           promptState.ready = true;
-          promptState.toolCount = registeredNames.size;
           promptState.connectError = "";
 
-          if (lateRegistered > 0) {
-            api.logger.info(
-              `[composio-plus] cache-refresh: late-registered ${lateRegistered} meta-tool(s) (${registeredNames.size} total active)`,
-            );
-          } else {
-            api.logger.debug?.(
-              `[composio-plus] cache-refresh: cache up-to-date (${fresh.length} meta-tools, no diff)`,
+          if (added.length > 0) {
+            api.logger.warn(
+              `[composio-plus] cache-refresh: ${added.length} new meta-tool(s) detected upstream — they will register on next gateway start: ${added.join(", ")}`,
             );
           }
-          if (stale.length > 0) {
+          if (removed.length > 0) {
             api.logger.warn(
-              `[composio-plus] cache-refresh: ${stale.length} meta-tool(s) removed upstream but stay registered until next gateway restart: ${stale.join(", ")}`,
+              `[composio-plus] cache-refresh: ${removed.length} meta-tool(s) removed upstream but stay registered until next gateway restart (calls may 404): ${removed.join(", ")}`,
+            );
+          }
+          if (added.length === 0 && removed.length === 0) {
+            api.logger.debug?.(
+              `[composio-plus] cache-refresh: cache up-to-date (${fresh.length} meta-tools, no diff)`,
             );
           }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           api.logger.warn(
-            `[composio-plus] cache-refresh failed: ${msg} — keeping ${registeredNames.size} cached tool(s) registered`,
+            `[composio-plus] cache-refresh failed: ${msg} — keeping ${registeredNames.size} registered tool(s) callable`,
           );
           // Mark ready so the prompt switches from "loading" to "errored" — but
-          // preserve toolCount if the cache fast-path already populated it,
-          // since those tools are still callable while the refresh is broken.
+          // preserve toolCount if the synchronous registration path already
+          // populated it, since those tools are still callable while the
+          // refresh is broken.
           promptState.ready = true;
           promptState.connectError = msg;
         }

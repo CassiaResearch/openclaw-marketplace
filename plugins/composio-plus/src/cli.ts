@@ -3,8 +3,12 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as readline from "node:readline";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import { resolveSecretRefValues } from "openclaw/plugin-sdk/runtime-secret-resolution";
 import { parseComposioPlusConfig } from "./config.js";
-import { readMetaToolCache, metaToolCachePath } from "./metaToolCache.js";
+import { readMetaToolCache, metaToolCachePath, writeMetaToolCache } from "./metaToolCache.js";
+import { buildSessionFromConfig } from "./session.js";
+import { fetchMetaToolsFromSession } from "./refresh.js";
+import type { ComposioPlusConfig } from "./types.js";
 
 const PLUGIN_ID = "composio-plus";
 const TOOLS_ALSO_ALLOW_KEY = "composio-plus";
@@ -50,13 +54,15 @@ function getPluginConfigEntry(): Record<string, unknown> {
 }
 
 // Detect openclaw secret-reference shape so setup can refuse to overwrite a
-// reference with a plain string. The runtime in `register()` always sees a
-// resolved string (openclaw dereferences before plugin load), so this only
-// matters for CLI commands that read the config file directly.
-function isSecretRef(value: unknown): value is { source: string; provider?: string; id: string } {
+// reference with a plain string and can pass it to the SDK resolver. Mirrors
+// the runtime SecretRef type from openclaw — source is one of three known
+// transports and provider is required.
+type SecretRefShape = { source: "env" | "file" | "exec"; provider: string; id: string };
+function isSecretRef(value: unknown): value is SecretRefShape {
   if (typeof value !== "object" || value === null) return false;
   const obj = value as Record<string, unknown>;
-  return typeof obj.source === "string" && typeof obj.id === "string";
+  if (obj.source !== "env" && obj.source !== "file" && obj.source !== "exec") return false;
+  return typeof obj.provider === "string" && typeof obj.id === "string";
 }
 
 function setPluginConfigEntry(updates: Record<string, unknown>): void {
@@ -96,63 +102,126 @@ export function registerCli(api: OpenClawPluginApi): void {
         .description("Composio Plus — per-user Composio access via TS SDK");
 
       // ── setup ─────────────────────────────────────────────────────
-      // Saves credentials to plugin config. The plugin's cache-refresh
-      // service handles tool registration & cache priming on every gateway
-      // start — setup does NOT touch the cache.
+      // Configures credentials and pre-seeds the meta-tool disk cache.
+      // The cache is the sole source of tools at gateway start (register()
+      // reads it synchronously); cache-refresh keeps it fresh thereafter.
+      // Without a pre-seeded cache, a fresh install boots with zero tools.
+      //
+      // Three credential paths are supported:
+      //   1. Plain config or first-time setup → save creds + seed.
+      //   2. Existing secret-ref + no --api-key → don't touch config; resolve
+      //      the ref via the plugin SDK and seed using the resolved value.
+      //   3. Existing secret-ref + --api-key + --force → overwrite + seed.
       cmd
         .command("setup")
-        .description("Configure credentials in plugin config (local dev)")
+        .description("Configure credentials and pre-seed the meta-tool cache")
         .option("--api-key <apiKey>", "Composio ak_... project key")
         .option("--user-id <userId>", "Per-user Composio identity")
         .option("--no-prompt", "Skip interactive prompts (requires --api-key and --user-id)")
         .option("--force", "Allow overwriting an existing secret reference with a plain string")
         .action(async (opts: { apiKey?: string; userId?: string; prompt?: boolean; force?: boolean }) => {
           const rawEntry = getPluginConfigEntry();
+          const existingRef = isSecretRef(rawEntry.apiKey) ? rawEntry.apiKey : null;
 
-          // On managed deploys, apiKey is a {source, provider, id} reference
-          // resolved by openclaw at gateway startup. Refuse to clobber it with
-          // a plain string unless --force is given.
-          if (isSecretRef(rawEntry.apiKey) && !opts.force) {
+          // Refuse to clobber a managed-deploy ref with a plain string unless
+          // --force is given. (Only matters when --api-key is also provided.)
+          if (existingRef && opts.apiKey && !opts.force) {
             console.log(
               "\nExisting config.apiKey is a secret reference — refusing to overwrite with a plain string.\n" +
-                "On managed deploys, edit ~/.openclaw/openclaw.json directly.\n" +
+                "To re-seed the cache without changing config, omit --api-key.\n" +
                 "Pass --force to replace the reference with a plain key (local dev only).\n",
             );
             return;
           }
 
-          // If --force was given over a ref, drop it before parseConfig (the
-          // zod schema in src/config.ts expects apiKey: string, would throw).
-          const sanitized = isSecretRef(rawEntry.apiKey)
-            ? { ...rawEntry, apiKey: undefined }
-            : rawEntry;
-          const existing = parseComposioPlusConfig(sanitized);
-          let apiKey = opts.apiKey?.trim() || existing.apiKey;
-          let userId = opts.userId?.trim() || existing.userId;
-          const wantPrompt = opts.prompt !== false && (!apiKey || !userId);
+          let effectiveApiKey: string | undefined;
+          let effectiveUserId: string | undefined;
+          let saveToConfig = true;
 
-          if (wantPrompt) {
-            console.log("\nComposio Plus Setup\n");
-            const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-            if (!apiKey) apiKey = (await ask(rl, "Composio API key (ak_...): ")).trim();
-            if (!userId) userId = (await ask(rl, "User ID (per-user Composio identity): ")).trim();
-            rl.close();
+          if (existingRef && !opts.apiKey) {
+            // Path 2: managed deploy. Keep the ref in config; resolve it
+            // here only to call the SDK for cache seeding. Single ref in,
+            // single value out — pull it directly from the result map.
+            try {
+              const resolved = await resolveSecretRefValues([existingRef], {
+                config: api.config,
+                env: process.env,
+              });
+              const [value] = resolved.values();
+              if (typeof value !== "string" || !value) {
+                const refLabel = `${existingRef.source}:${existingRef.provider}:${existingRef.id}`;
+                console.log(`\nFailed to resolve apiKey ref (${refLabel}). Cache not seeded.\n`);
+                return;
+              }
+              effectiveApiKey = value;
+            } catch (err) {
+              console.log(
+                `\nFailed to resolve apiKey ref: ${err instanceof Error ? err.message : String(err)}\n`,
+              );
+              return;
+            }
+            effectiveUserId =
+              opts.userId?.trim() ||
+              (typeof rawEntry.userId === "string" ? rawEntry.userId : undefined) ||
+              process.env.COMPOSIO_USER_ID;
+            saveToConfig = false;
+          } else {
+            // Paths 1 & 3: plain string or --force overwrite. Drop the ref
+            // before parseConfig (zod schema expects string; would throw).
+            const sanitized = existingRef ? { ...rawEntry, apiKey: undefined } : rawEntry;
+            const existing = parseComposioPlusConfig(sanitized);
+            effectiveApiKey = opts.apiKey?.trim() || existing.apiKey;
+            effectiveUserId = opts.userId?.trim() || existing.userId;
+
+            const wantPrompt =
+              opts.prompt !== false && (!effectiveApiKey || !effectiveUserId);
+            if (wantPrompt) {
+              console.log("\nComposio Plus Setup\n");
+              const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+              if (!effectiveApiKey) effectiveApiKey = (await ask(rl, "Composio API key (ak_...): ")).trim();
+              if (!effectiveUserId) effectiveUserId = (await ask(rl, "User ID (per-user Composio identity): ")).trim();
+              rl.close();
+            }
           }
 
-          if (!apiKey || !userId) {
+          if (!effectiveApiKey || !effectiveUserId) {
             console.log("\nMissing apiKey or userId. Setup cancelled.");
             return;
           }
-          if (!apiKey.startsWith("ak_")) {
+          if (!effectiveApiKey.startsWith("ak_")) {
             console.log("Warning: API key should start with 'ak_'");
           }
 
-          setPluginConfigEntry({ apiKey, userId });
-          console.log(`Saved credentials to ${CONFIG_PATH}`);
-          console.log("\nRestart the gateway to load tools: openclaw gateway restart");
-          console.log(
-            "(The cache-refresh service fetches the meta-tool surface on every gateway start.)\n",
-          );
+          if (saveToConfig) {
+            setPluginConfigEntry({ apiKey: effectiveApiKey, userId: effectiveUserId });
+            console.log(`Saved credentials to ${CONFIG_PATH}`);
+          } else {
+            console.log("Using existing config (apiKey is a secret reference; not modified).");
+          }
+
+          // Pre-seed the disk cache. The fetched tool surface reflects
+          // the operator's actual toolkits/authConfigs/customTools, so this
+          // is more accurate than any baked-in default could be.
+          const seedConfig: ComposioPlusConfig = parseComposioPlusConfig({
+            ...rawEntry,
+            apiKey: effectiveApiKey,
+            userId: effectiveUserId,
+          });
+          try {
+            const { session } = await buildSessionFromConfig(seedConfig);
+            const tools = await fetchMetaToolsFromSession(session);
+            const cachePath = writeMetaToolCache(seedConfig.baseURL, tools);
+            console.log(`Pre-seeded ${tools.length} meta-tool(s) → ${cachePath}`);
+          } catch (err) {
+            console.log(
+              `\nCache pre-seed failed: ${err instanceof Error ? err.message : String(err)}\n` +
+                "Credentials were saved (if requested) but the cache was not written.\n" +
+                "Fix the credentials/network and re-run `openclaw composio setup`.\n",
+            );
+            return;
+          }
+
+          console.log("\nRestart the gateway to load tools: openclaw gateway restart\n");
         });
 
       // ── status ────────────────────────────────────────────────────
