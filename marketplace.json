@@ -42,8 +42,8 @@
     {
       "name": "composio-plus",
       "description": "Per-user Composio access for OpenClaw via the TypeScript SDK. Exposes the six Composio meta-tools (search, schemas, multi-execute, manage-connections, workbench, bash) and supports custom tools, custom toolkits, and custom auth configs.",
-      "source": "./tarballs/copilotai-openclaw-composio-plus-0.0.3.tgz",
-      "version": "0.0.3"
+      "source": "./tarballs/copilotai-openclaw-composio-plus-0.0.4.tgz",
+      "version": "0.0.4"
     },
     {
       "name": "openclaw-explorium",
