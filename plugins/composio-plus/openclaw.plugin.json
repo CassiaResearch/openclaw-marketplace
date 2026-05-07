@@ -1,7 +1,7 @@
 {
   "id": "composio-plus",
   "name": "Composio Plus",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Per-user Composio access via the TypeScript SDK. Exposes the six Composio meta-tools (search, schemas, multi-execute, manage-connections, workbench, bash). Supports custom tools, custom toolkits, and custom auth configs.",
   "activation": {
     "onStartup": true
