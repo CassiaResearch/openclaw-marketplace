@@ -1,4 +1,4 @@
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { parseComposioPlusConfig, hasRequiredCredentials } from "./src/config.js";
 import { readMetaToolCache, writeMetaToolCache } from "./src/metaToolCache.js";
 import { buildSessionFromConfig, type SessionBundle } from "./src/session.js";
@@ -62,7 +62,7 @@ function registerMetaToolWithDispatch(
   });
 }
 
-const composioPlusPlugin = {
+export default definePluginEntry({
   id: "composio-plus",
   name: "Composio Plus",
   description:
@@ -80,12 +80,6 @@ const composioPlusPlugin = {
       api.logger.debug?.("[composio-plus] Plugin disabled");
       return;
     }
-
-    // CLI loader runs register() too — without this gate, every
-    // `openclaw composio …` invocation builds a session it never uses, and
-    // the missing-credentials warning below would log noise every time the
-    // user ran a CLI subcommand. CLI subcommands are already registered above.
-    if (api.registrationMode !== "full") return;
 
     // Mutable state shared with the prompt hook below — updated as the
     // cache-fast-path completes and as the cache-refresh service runs.
@@ -218,6 +212,4 @@ const composioPlusPlugin = {
       },
     });
   },
-};
-
-export default composioPlusPlugin;
+});
