@@ -1,24 +1,33 @@
 import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { parseComposioPlusConfig, hasRequiredCredentials } from "./src/config.js";
 import { readMetaToolCache, writeMetaToolCache } from "./src/metaToolCache.js";
+import {
+  readSessionToolkitsCache,
+  writeSessionToolkitsCache,
+} from "./src/toolkitCache.js";
 import { buildSessionFromConfig, type SessionBundle } from "./src/session.js";
 import { routeMultiExecute } from "./src/dispatch.js";
-import { fetchMetaToolsFromSession } from "./src/refresh.js";
+import { fetchMetaToolsFromSession, fetchSessionToolkits } from "./src/refresh.js";
 import { registerCli } from "./src/cli.js";
 import { getSystemPrompt, type ComposioPlusPromptState } from "./src/prompt.js";
 import type { CachedMetaTool } from "./src/types.js";
 
 const COMPOSIO_MULTI_EXECUTE_TOOL = "COMPOSIO_MULTI_EXECUTE_TOOL";
+const COMPOSIO_MANAGE_CONNECTIONS = "COMPOSIO_MANAGE_CONNECTIONS";
+
+// Staleness window for the session-toolkits cache. Sized so operator-side
+// connection changes surface within a turn or two without thrashing the API.
+const SESSION_TOOLKITS_TTL_MS = 60_000;
 
 /**
- * Register one meta-tool with openclaw. The execute callback awaits the shared
- * sessionPromise and dispatches to either routeMultiExecute (for the
- * MULTI_EXECUTE_TOOL meta) or session.execute (for the others).
+ * Register one meta-tool. MANAGE_CONNECTIONS additionally invalidates the
+ * session-toolkits cache so the next prompt build refetches (no I/O here).
  */
 function registerMetaToolWithDispatch(
   api: OpenClawPluginApi,
   tool: CachedMetaTool,
   sessionPromise: Promise<SessionBundle>,
+  onManageConnectionsSuccess: () => void,
 ): void {
   api.registerTool({
     name: tool.name,
@@ -45,6 +54,9 @@ function registerMetaToolWithDispatch(
             content: [{ type: "text" as const, text: `Error: ${result.error}` }],
             details: null,
           };
+        }
+        if (tool.name === COMPOSIO_MANAGE_CONNECTIONS) {
+          onManageConnectionsSuccess();
         }
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result.data ?? null) }],
@@ -81,19 +93,49 @@ export default definePluginEntry({
       return;
     }
 
-    // Mutable state shared with the prompt hook below — updated as the
-    // cache-fast-path completes and as the cache-refresh service runs.
-    // Closure-captured by the on() callback, so subsequent prompt builds see
-    // the latest state without re-registering the hook.
+    // Closure-captured by the on() callback and the cache-refresh service.
     const promptState: ComposioPlusPromptState = {
       ready: false,
       toolCount: 0,
       connectError: "",
+      mode:
+        config.disabledToolkits.length > 0
+          ? "disable"
+          : config.toolkits.length > 0
+            ? "allow"
+            : "open",
     };
 
-    api.on("before_prompt_build", () => ({
-      prependSystemContext: getSystemPrompt(promptState),
-    }));
+    // Warm-seed from disk so the first prompt build (and every per-turn
+    // plugin re-instantiation openclaw does) has bucket info immediately,
+    // ahead of service.start's live refresh.
+    const sessionToolkitsCache = readSessionToolkitsCache(config.baseURL, config.userId);
+    if (sessionToolkitsCache) {
+      promptState.sessionToolkits = sessionToolkitsCache.toolkits;
+    }
+
+    // Refresh is gated on prompt-build, not scheduled. Inflight flag dedupes
+    // concurrent builds; MANAGE_CONNECTIONS sets lastFetchAt=0 to force the
+    // next build past the TTL.
+    let lastSessionToolkitsFetchAt = sessionToolkitsCache
+      ? Date.now() - sessionToolkitsCache.ageMs
+      : 0;
+    let sessionToolkitsRefreshInflight: Promise<void> | null = null;
+
+    api.on("before_prompt_build", () => {
+      maybeRefreshSessionToolkits();
+      return { prependSystemContext: getSystemPrompt(promptState) };
+    });
+
+    function maybeRefreshSessionToolkits(): void {
+      if (sessionToolkitsRefreshInflight) return;
+      if (Date.now() - lastSessionToolkitsFetchAt < SESSION_TOOLKITS_TTL_MS) return;
+      sessionToolkitsRefreshInflight = refreshSessionToolkitsAndPersist().finally(() => {
+        // Update timestamp on resolve OR reject so failures don't hot-loop.
+        lastSessionToolkitsFetchAt = Date.now();
+        sessionToolkitsRefreshInflight = null;
+      });
+    }
 
     if (!hasRequiredCredentials(config)) {
       // apiKey is empty either because nothing is set or because a configured
@@ -127,6 +169,31 @@ export default definePluginEntry({
     // removed). Doesn't grow after register() returns.
     const registeredNames = new Set<string>();
 
+    // Called from service.start (initial fetch) and the prompt-build gate
+    // (TTL-driven refetch). Always swallows errors so a failure here can't
+    // block tool registration or prompt builds.
+    const refreshSessionToolkitsAndPersist = async (): Promise<void> => {
+      try {
+        const { session } = await sessionPromise;
+        const toolkits = await fetchSessionToolkits(session);
+        writeSessionToolkitsCache(config.baseURL, config.userId, toolkits);
+        promptState.sessionToolkits = toolkits;
+        const activeCount = toolkits.filter((t) => t.isActive).length;
+        // Info (not debug) so refresh activity is visible at default verbosity.
+        api.logger.info(
+          `[composio-plus] session-toolkits refresh: ${toolkits.length} toolkit(s), ${activeCount} connected, for ${config.userId}`,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        api.logger.warn(`[composio-plus] session-toolkits refresh failed: ${msg}`);
+      }
+    };
+
+    // No I/O — flips a stale flag for the next prompt build's TTL gate.
+    const onManageConnectionsSuccess = (): void => {
+      lastSessionToolkitsFetchAt = 0;
+    };
+
     // Synchronous registration from the disk cache. The cache is the sole
     // source of truth: it's pre-seeded by `openclaw composio setup` and
     // refreshed on every gateway start by the cache-refresh service below.
@@ -138,7 +205,7 @@ export default definePluginEntry({
     const cached = readMetaToolCache(config.baseURL);
     if (cached) {
       for (const tool of cached.tools) {
-        registerMetaToolWithDispatch(api, tool, sessionPromise);
+        registerMetaToolWithDispatch(api, tool, sessionPromise, onManageConnectionsSuccess);
         registeredNames.add(tool.name);
       }
       promptState.ready = true;
@@ -167,6 +234,7 @@ export default definePluginEntry({
       start: async () => {
         try {
           const { session } = await sessionPromise;
+
           const fresh = await fetchMetaToolsFromSession(session);
           const freshNames = new Set(fresh.map((t) => t.name));
           const added = fresh
@@ -197,6 +265,11 @@ export default definePluginEntry({
               `[composio-plus] cache-refresh: cache up-to-date (${fresh.length} meta-tools, no diff)`,
             );
           }
+
+          // Initial session-toolkits fetch + reset TTL gate so the next
+          // prompt build doesn't redundantly refetch.
+          await refreshSessionToolkitsAndPersist();
+          lastSessionToolkitsFetchAt = Date.now();
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           api.logger.warn(
