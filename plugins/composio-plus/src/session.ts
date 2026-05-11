@@ -57,28 +57,35 @@ export async function buildSessionFromConfig(
   // See docs.composio.dev/docs/white-labeling-authentication.
   const authConfigs = config.authConfigs;
 
-  // Toolkit scope. Composio's docs say omitting `toolkits` gives full catalog
-  // access, but in practice the API rejects auth-config bindings or extension
-  // tools whose toolkits aren't in the enabled list (error 4307). Union of:
-  //   - config.toolkits (operator-declared)
-  //   - Object.keys(authConfigs) (toolkits with custom auth pinning)
-  //   - extendsToolkit values from each custom tool
-  const toolkitSet = new Set<string>(config.toolkits.map((t) => t.toLowerCase()));
-  for (const toolkit of Object.keys(authConfigs)) toolkitSet.add(toolkit);
-  for (const tool of customTools) {
-    const ext = (tool as { extendsToolkit?: string }).extendsToolkit;
-    if (ext) toolkitSet.add(ext.toLowerCase());
-  }
-
-  log.debug(
-    `[composio-plus] session.create userId=${config.userId} toolkits=[${[...toolkitSet].join(", ")}] customTools=${customTools.length} customToolkits=${customToolkits.length} authConfigs=${Object.keys(authConfigs).length}`,
-  );
-
+  // Toolkit scope. Three cases:
+  //   - config.disabledToolkits set → pass { disable: [...] }, everything else
+  //     in the catalog is callable.
+  //   - config.toolkits set → pass [...] as literal allowlist.
+  //   - neither set → omit `toolkits` entirely; SDK exposes the full catalog.
   const opts: Record<string, unknown> = {
     experimental: { customTools, customToolkits },
   };
-  if (toolkitSet.size > 0) opts.toolkits = [...toolkitSet];
   if (Object.keys(authConfigs).length > 0) opts.authConfigs = authConfigs;
+
+  let modeLabel: string;
+  if (config.disabledToolkits.length > 0) {
+    if (config.toolkits.length > 0) {
+      log.warn(
+        `[composio-plus] both 'toolkits' and 'disabledToolkits' are set — disabledToolkits wins (the SDK accepts only one form). Ignoring toolkits=[${config.toolkits.join(", ")}].`,
+      );
+    }
+    opts.toolkits = { disable: config.disabledToolkits };
+    modeLabel = `mode=disable disable=[${config.disabledToolkits.join(", ")}]`;
+  } else if (config.toolkits.length > 0) {
+    opts.toolkits = config.toolkits;
+    modeLabel = `mode=allow toolkits=[${config.toolkits.join(", ")}]`;
+  } else {
+    modeLabel = "mode=open (full catalog)";
+  }
+
+  log.debug(
+    `[composio-plus] session.create userId=${config.userId} ${modeLabel} customTools=${customTools.length} customToolkits=${customToolkits.length} authConfigs=${Object.keys(authConfigs).length}`,
+  );
 
   const session = await composio.create(
     config.userId,

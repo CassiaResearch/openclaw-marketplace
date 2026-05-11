@@ -1,7 +1,7 @@
 {
   "id": "composio-plus",
   "name": "Composio Plus",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Per-user Composio access via the TypeScript SDK. Exposes the six Composio meta-tools (search, schemas, multi-execute, manage-connections, workbench, bash). Supports custom tools, custom toolkits, and custom auth configs.",
   "activation": {
     "onStartup": true
@@ -58,7 +58,12 @@
       "toolkits": {
         "type": "array",
         "items": { "type": "string" },
-        "description": "Composio catalog toolkits the session should include (e.g. github, gmail)."
+        "description": "Allowlist mode: Composio catalog toolkits the session should include (e.g. github, gmail). Mutually exclusive with `disabledToolkits` — if both are set, `disabledToolkits` wins."
+      },
+      "disabledToolkits": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Disallowlist mode: every toolkit in Composio's catalog except these is callable. Use to exclude integrations covered by other paths (e.g. gmail/gws, slack via the openclaw plugin) so the agent doesn't pick Composio for them. Mutually exclusive with `toolkits`."
       },
       "authConfigs": {
         "type": "object",
@@ -87,8 +92,12 @@
       "advanced": true
     },
     "toolkits": {
-      "label": "Toolkits",
-      "help": "Composio catalog toolkits the session exposes through meta-tools"
+      "label": "Toolkits (allowlist)",
+      "help": "Composio catalog toolkits the session exposes through meta-tools. Mutually exclusive with Disabled Toolkits."
+    },
+    "disabledToolkits": {
+      "label": "Disabled Toolkits (disallowlist)",
+      "help": "Catalog toolkits to exclude — everything else is callable. Use when an integration is handled by another path (e.g. gws for Google Workspace, slack via the openclaw Slack plugin)."
     },
     "authConfigs": {
       "label": "Auth Configs",

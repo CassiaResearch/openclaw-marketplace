@@ -19,6 +19,7 @@ export const composioPlusConfigSchema = z.object({
   userId: z.string().optional(),
   baseURL: z.string().optional(),
   toolkits: z.array(z.string()).optional(),
+  disabledToolkits: z.array(z.string()).optional(),
   authConfigs: z.record(z.string()).optional(),
 });
 
@@ -49,7 +50,8 @@ export function parseComposioPlusConfig(
     apiKey,
     userId: raw.userId ?? process.env.COMPOSIO_USER_ID ?? "",
     baseURL: raw.baseURL ?? process.env.COMPOSIO_BASE_URL ?? "https://backend.composio.dev",
-    toolkits: raw.toolkits ?? [],
+    toolkits: (raw.toolkits ?? []).map((t) => t.toLowerCase()),
+    disabledToolkits: (raw.disabledToolkits ?? []).map((t) => t.toLowerCase()),
     authConfigs,
   };
 }
