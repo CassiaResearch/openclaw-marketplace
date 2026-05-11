@@ -2,6 +2,9 @@
   "id": "self-learn",
   "name": "Self-Learn",
   "description": "Enables the agent to autonomously create, update, and manage reusable skills from experience",
+  "activation": {
+    "onStartup": true
+  },
   "contracts": {
     "tools": [
       "skill_manage"
@@ -17,10 +20,23 @@
         "maximum": 500,
         "default": 100
       },
-      "enableHeartbeat": {
+      "enableCron": {
         "type": "boolean",
-        "description": "Add a periodic heartbeat task to HEARTBEAT.md for skill hygiene review",
+        "description": "Register a gateway cron job that periodically reviews self-learned skills",
         "default": true
+      },
+      "cron": {
+        "type": "string",
+        "description": "Cron expression for the periodic skill review (5-field standard cron)",
+        "default": "0 */6 * * *"
+      },
+      "timezone": {
+        "type": "string",
+        "description": "Optional IANA timezone for the cron expression (e.g. \"America/Vancouver\"). Defaults to UTC."
+      },
+      "slackChannel": {
+        "type": "string",
+        "description": "Optional Slack destination for the periodic review findings (e.g. \"#emma-skills\"). When unset, the review reply stays in the isolated cron session and is not announced. When set, the agent's summary is announced to this channel; HEARTBEAT_OK suppresses delivery."
       }
     }
   }

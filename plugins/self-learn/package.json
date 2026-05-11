@@ -18,13 +18,19 @@
       "./dist/index.js"
     ]
   },
+  "files": [
+    "dist/**",
+    "openclaw.plugin.json",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "prepack": "pnpm run build",
     "test": "vitest run"
   },
   "peerDependencies": {
-    "openclaw": "*"
+    "openclaw": ">=2026.5.6"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
