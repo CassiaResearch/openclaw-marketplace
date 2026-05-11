@@ -9,7 +9,7 @@ An OpenClaw plugin that enables autonomous skill creation and evolution. The age
 3. **Delegates authoring to `skill-creator`** — for the **how-to** of writing a good skill, the agent uses OpenClaw's bundled `skill-creator` skill. This plugin focuses on when to create, not how to author.
 4. **Security guard** scans all skill content for threat patterns (exfiltration, destructive commands, prompt injection) before writing.
 5. **Atomic writes** ensure skills are never left in a partially-written state (temp file + rename).
-6. **Heartbeat task** runs every 6 hours in `HEARTBEAT.md` to review self-learned skills for hygiene issues.
+6. **Periodic skill review** runs on a configurable cron (default every 6 hours) via a gateway-managed job the plugin registers itself — no `HEARTBEAT.md` mutation.
 
 Skills are stored in the workspace `skills/` directory with a `self-learned-` prefix (e.g., `skills/self-learned-deep-research/SKILL.md`), so they're automatically discovered by OpenClaw's skill loading pipeline. The prefix is the ownership boundary — the plugin only manages directories with this prefix and never touches other skills.
 
@@ -68,7 +68,7 @@ openclaw plugins inspect self-learn
 Once loaded:
 - The `skill_manage` tool appears in the agent's available tools
 - Self-learning guidance is injected into the system prompt
-- A `self-learn-review` heartbeat task is added to `HEARTBEAT.md` for periodic skill review
+- A `self-learn-review` cron job is registered with the gateway for periodic skill review
 
 ### Manage the plugin
 
@@ -90,7 +90,9 @@ Configure via your OpenClaw config under `plugins.entries.self-learn.config`:
       "self-learn": {
         "config": {
           "maxSkills": 100,
-          "enableHeartbeat": true
+          "enableCron": true,
+          "cron": "0 */6 * * *",
+          "timezone": "UTC"
         }
       }
     }
@@ -101,17 +103,25 @@ Configure via your OpenClaw config under `plugins.entries.self-learn.config`:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `maxSkills` | `100` | Maximum number of self-learned skills. New creates are rejected once reached. |
-| `enableHeartbeat` | `true` | Add a periodic heartbeat task to `HEARTBEAT.md` for skill hygiene review. |
+| `enableCron` | `true` | Register a gateway cron job that periodically reviews self-learned skills. Set to `false` to disable; the plugin will remove its managed jobs on next gateway start. |
+| `cron` | `"0 */6 * * *"` | Cron expression (5-field standard) for the periodic review. |
+| `timezone` | unset (UTC) | Optional IANA timezone (e.g. `"America/Vancouver"`). |
+| `slackChannel` | unset | Optional Slack channel for the review findings (e.g. `"#emma-skills"`). When unset, the review reply stays in the isolated cron session and is not announced. When set, the agent's summary is announced to this Slack channel via OpenClaw's announce delivery. |
 
-## Heartbeat Integration
+## Periodic Skill Review (cron)
 
-On first activation, the plugin adds a `self-learn-review` task to the workspace `HEARTBEAT.md`. This task runs every **6 hours** and prompts the agent to:
+On gateway start, the plugin registers (or updates) a `self-learn-review` cron job, tagged `[self-learn]` in its description for idempotent reconciliation. The job runs on a configurable schedule (default every 6 hours), in an **isolated sibling session** — it never interrupts the user's main thread. Each run prompts the agent to run two checks:
 
-1. Run `skill_manage(action='list')` to review current self-learned skills
-2. Patch any that are stale or could be improved based on recent sessions
-3. Reply `HEARTBEAT_OK` if nothing needs attention
+1. **Conflict check** — compare self-learned skills against built-in skills to surface overlaps with a recommended action.
+2. **Improvement check** — use memory tools to spot self-learned skills that are incomplete or out of date based on recent session activity.
 
-The heartbeat task is a maintenance safety net — the primary self-learning happens during active sessions via the system prompt guidance. The heartbeat is idempotent (re-enabling the plugin won't duplicate the task) and non-destructive (uninstalling leaves the task in `HEARTBEAT.md`; remove it manually if desired).
+If both checks find nothing, the agent replies `HEARTBEAT_OK` and the run is silently dropped. If there are findings and `slackChannel` is configured, the summary is announced to that Slack channel; otherwise the summary stays in the isolated cron session for later inspection.
+
+The job is reconciled on every gateway start, so restarts and config edits converge without duplicating jobs. Disabling the plugin (or setting `enableCron: false`) causes the plugin to remove its managed jobs on the next gateway start.
+
+### Migration from earlier versions
+
+Earlier versions (≤0.1.x) appended a `self-learn-review` block to `HEARTBEAT.md`. The plugin no longer manages that block. If you're upgrading, remove the legacy block manually (look for the `# self-learn-plugin heartbeat task` marker in `HEARTBEAT.md`) to avoid the review running twice — once from the cron and once from the heartbeat scanner. The plugin will log a one-time warning on the next session if it detects the legacy marker.
 
 ## Tool Reference
 
