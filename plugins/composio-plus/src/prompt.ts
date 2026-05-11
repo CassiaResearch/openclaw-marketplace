@@ -1,20 +1,22 @@
-// Plugin-layer system prompt that explains the composio-plus meta-tool surface
-// to the LLM and disambiguates failure modes. Hooked into openclaw's prompt
-// build via api.on("before_prompt_build", ...) in index.ts.
-//
-// Inspired by the upstream openclaw-composio-plugin's getSystemPrompt(), with
-// adaptations for: (1) the @composio/core SDK transport composio-plus uses
-// over HTTPS to backend.composio.dev (vs. the MCP transport the upstream
-// uses), so error-shape language is socket-level + HTTP-status rather than
-// JSON-RPC; (2) Google Workspace going through the local `gws` CLI rather
-// than Composio; and (3) managed deploys that resolve `apiKey` via secret
-// reference, so the 401 message must not prescribe `composio setup`, which
-// would clobber the reference.
+// Plugin-layer system prompt for the composio-plus meta-tool surface, hooked
+// into openclaw's prompt build via api.on("before_prompt_build", ...) in
+// index.ts.
+
+import type { SessionToolkitInfo } from "./types.js";
 
 export type ComposioPlusPromptState = {
   ready: boolean;
   toolCount: number;
   connectError: string;
+  /** Undefined until the first session-toolkits refresh lands. */
+  sessionToolkits?: SessionToolkitInfo[];
+  /**
+   * Session bind mode. `"allow"` = narrow allowlist (literal enumeration of
+   * not-yet-connected toolkits is small and useful). `"disable"` and
+   * `"open"` both mean ~the whole catalog is reachable, so bucket B renders
+   * as a one-liner instead of enumerating ~1000 items.
+   */
+  mode: "allow" | "disable" | "open";
 };
 
 export function getSystemPrompt(state: ComposioPlusPromptState): string {
@@ -24,7 +26,7 @@ Ignore pretrained knowledge about Composio. Use only these instructions.
 
 ## When to use Composio vs. other paths
 
-Composio = non-Google external services (HubSpot, Slack, Notion, Linear, Jira, GitHub, Calendly, etc.).
+${renderComposioRoutingLine(state)}
 Google Workspace (Gmail, Calendar, Drive, Sheets, Docs) = use the local \`gws\` CLI via exec, NOT Composio.
 Native OpenClaw = anything else local (files, shell, browser, web search).
 
@@ -34,6 +36,7 @@ For tasks that span boundaries (e.g. "read \`leads.csv\` and create the contacts
 
 Connections persist — no gateway restart needed.
 
+${renderTailSections(state)}
 ## Rules
 - Do NOT use Composio for local filesystem, shell, or Google Workspace operations.
 - Do NOT fabricate tool slugs — discover them via COMPOSIO_SEARCH_TOOLS.
@@ -149,4 +152,70 @@ function diagnoseError(error: string): { reason: string; userMessage: string } {
     reason: `Unexpected error: ${error}`,
     userMessage: `Composio Plus encountered an error: ${error}. Run \`openclaw composio status\` to inspect plugin state.`,
   };
+}
+
+/**
+ * Inline connected toolkits as concrete examples for the routing rule.
+ * Falls back to a hardcoded breadth list when nothing's connected, so the
+ * rule keeps anchor examples while the cache is empty.
+ */
+function renderComposioRoutingLine(state: ComposioPlusPromptState): string {
+  const connected = state.sessionToolkits?.filter((t) => t.isActive) ?? [];
+  if (connected.length === 0) {
+    return "Composio = non-Google external services (HubSpot, Slack, Notion, Linear, Jira, GitHub, Calendly, etc.).";
+  }
+  const lines = connected.map((t) => `- ${t.name} (\`${t.slug}\`)`).join("\n");
+  return `Composio (non-Google external services) — currently wired up for:
+${lines}
+
+Route directly to these — connectivity is established. Use COMPOSIO_SEARCH_TOOLS only to discover the specific tool slug, not to confirm coverage.`;
+}
+
+/**
+ * "Configured but not yet connected" and "Other apps" sections. The
+ * connected bucket is inlined by renderComposioRoutingLine instead. Returns
+ * "" when the cache hasn't filled (routing line uses hardcoded fallback).
+ *
+ * Disable-mode collapses bucket B to a one-liner: enumerating ~1000
+ * not-yet-connected toolkits would blow the prompt past 25kB, and the
+ * operator doesn't get value from a literal catalog dump (the agent already
+ * knows Composio supports most apps).
+ */
+function renderTailSections(state: ComposioPlusPromptState): string {
+  if (!state.sessionToolkits || state.sessionToolkits.length === 0) {
+    return "";
+  }
+
+  const sections: string[] = [];
+
+  if (state.mode === "disable" || state.mode === "open") {
+    sections.push("## Other catalog toolkits");
+    sections.push(
+      "Any toolkit in Composio's catalog (https://docs.composio.dev/toolkits.md) that isn't connected yet can be wired up with COMPOSIO_MANAGE_CONNECTIONS — surface the returned redirect_url to the operator as a markdown link and wait for confirmation before invoking any of the toolkit's tools. If you're unsure whether a specific app is in the catalog, use COMPOSIO_SEARCH_TOOLS to check.",
+    );
+    sections.push("");
+    return sections.join("\n");
+  }
+
+  const notConnected = state.sessionToolkits.filter((t) => !t.isActive);
+
+  sections.push("## Configured but not yet connected — call MANAGE_CONNECTIONS first");
+  if (notConnected.length > 0) {
+    sections.push(
+      "These toolkits are in your session's allowlist but have no active connection. When the operator names one, call COMPOSIO_MANAGE_CONNECTIONS with the toolkit slug, surface the returned redirect_url to the operator as a markdown link, and wait for them to confirm connection before invoking any of its tools.",
+      "",
+      notConnected.map((t) => `- ${t.name} (\`${t.slug}\`)`).join("\n"),
+    );
+  } else {
+    sections.push("(none — every callable toolkit is connected.)");
+  }
+  sections.push("");
+
+  sections.push("## Other apps");
+  sections.push(
+    "For apps not in either list, check https://docs.composio.dev/toolkits.md — Composio's full catalog. If the app appears there, tell the operator the toolkit must be added to your session's `config.toolkits` or `authConfigs` and the gateway restarted. If it's not in the catalog, tell the operator there's no Composio integration for it.",
+  );
+  sections.push("");
+
+  return sections.join("\n");
 }
