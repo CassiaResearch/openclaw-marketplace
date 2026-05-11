@@ -19,6 +19,11 @@ export type SkillMeta = {
 /**
  * Parse YAML frontmatter from SKILL.md content.
  * Returns key-value pairs from the --- delimited block.
+ *
+ * Supports inline scalars (`key: value`), quoted scalars, and block scalars
+ * — folded (`>`) and literal (`|`), with optional chomp indicators (`-`/`+`).
+ * Nested mapping values (e.g. `metadata:` with indented sub-keys) are stored
+ * as the empty string for the parent key; sub-keys are not surfaced.
  */
 function parseFrontmatter(content: string): Record<string, string> {
   const result: Record<string, string> = {};
@@ -28,15 +33,66 @@ function parseFrontmatter(content: string): Record<string, string> {
   if (endIdx === -1) return result;
 
   const block = content.slice(4, endIdx);
-  for (const line of block.split("\n")) {
+  const lines = block.split("\n");
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    // Skip indented lines — they belong to a previous key's nested value
+    // or block scalar, which the block-scalar branch below consumes directly.
+    if (/^\s/.test(line)) continue;
+
     const colonIdx = line.indexOf(":");
     if (colonIdx === -1) continue;
     const key = line.slice(0, colonIdx).trim();
+    if (!key) continue;
+
     let value = line.slice(colonIdx + 1).trim();
+
+    const blockScalar = value.match(/^([>|])([-+]?)\s*$/);
+    if (blockScalar) {
+      const style = blockScalar[1];
+      const collected: string[] = [];
+      let j = i + 1;
+      while (j < lines.length && (lines[j] === "" || /^\s/.test(lines[j]!))) {
+        collected.push(lines[j]!);
+        j++;
+      }
+      const firstNonEmpty = collected.find((l) => l.trim() !== "") ?? "";
+      const indentLen = firstNonEmpty.match(/^(\s+)/)?.[1]?.length ?? 0;
+      const stripped = collected.map((l) =>
+        l.trim() === "" ? "" : l.slice(Math.min(indentLen, l.length - l.trimStart().length)),
+      );
+
+      if (style === ">") {
+        // Folded: runs of non-empty lines fold together with single spaces;
+        // blank-line gaps become paragraph breaks (single newline).
+        const parts: string[] = [];
+        let buf: string[] = [];
+        for (const s of stripped) {
+          if (s === "") {
+            if (buf.length) {
+              parts.push(buf.join(" "));
+              buf = [];
+            }
+          } else {
+            buf.push(s);
+          }
+        }
+        if (buf.length) parts.push(buf.join(" "));
+        value = parts.join("\n");
+      } else {
+        value = stripped.join("\n").replace(/\n+$/, "");
+      }
+
+      result[key] = value;
+      i = j - 1;
+      continue;
+    }
+
     if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
       value = value.slice(1, -1);
     }
-    if (key) result[key] = value;
+    result[key] = value;
   }
   return result;
 }
